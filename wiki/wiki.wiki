@@ -14,4 +14,4 @@ Download the latest version via svn or from the downloads page. Add the path you
 
 = Supported Commands = 
 
-Use emacs function help (C-h f eredis-\[TAB\]) should give you a good idea what you can do. 
+Use emacs function help (C-h f eredis- TAB) should give you a good idea what you can do
