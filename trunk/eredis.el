@@ -170,6 +170,16 @@ value to whatever it is in Redis (or nil if not found)"
       (process-send-string *redis-process* (concat command key-value-string))
       (get-redis-response)))
 
+(defun redis-set(k v)
+  "set the key K and value V in Redis"
+  (let ((command "*3\r\n$3\r\nSET\r\n")
+	(key-value-string (format "$%d\r\n%s\r\n$%d\r\n%s\r\n" (length k) k (length v) v)))
+    (process-send-string *redis-process* (concat command key-value-string))
+    (let ((resp (get-redis-response)))
+      (if (string-match "+OK" resp)
+	  t
+	nil))))
+
 (defun redis-mset(m)
   "set the keys and values of the map M in Redis"
   (let ((num-args (1+ (* 2 (hash-table-count m)))))
@@ -248,10 +258,31 @@ column to values in an elisp map"
 	  (next-line))))
     retmap))
 
+(defun redis-org-table-row-to-key-value-pair()
+  "When point is in an org table convert the first column to a key and the second 
+column to a value, returning the result as a dotted pair"
+  (interactive)
+  (let ((beg (org-table-begin))
+	(end (org-table-end)))
+    (if (and (>= (point) beg)
+	     (<= (point) end))
+	(let ((key (redis-org-table-get-field-clean 1))
+	      (value (redis-org-table-get-field-clean 2)))
+	  (if (and key value)
+	      (cons key value)
+	    nil))
+      nil)))
+
 (defun redis-org-table-mset()
   "with point in an org table convert the table to a map and send it to redis with mset"
   (interactive)
   (let ((m (redis-org-table-to-map)))
     (redis-mset m)))
+
+(defun redis-org-table-row-set()
+  "with point in an org table set the key and value"
+  (interactive)
+  (let ((keyvalue (redis-org-table-row-to-key-value-pair)))
+    (redis-set (car keyvalue) (cdr keyvalue))))
 
 (provide 'eredis)
