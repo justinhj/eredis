@@ -1,0 +1,19 @@
+#summary eredis
+
+= Introduction =
+
+I thought it would be cool to be able to interact with Redis within emacs, and specifically to be able to pull keys into an [http://www.gnu.org/software/emacs/manual/html_node/org/Built_002din-table-editor.html org-table] so you can easily edit it.
+
+= Installation =
+
+Download the latest version via svn or from the downloads page. Add the path you downloaded it to in your .emacs file:
+
+(add-to-list 'load-path "~/eredis/")
+
+(require 'eredis)
+
+= Supported Commands = 
+
+Use emacs function help (C-h f eredis-[TAB]) should give you a good idea what you can do. 
+
+
