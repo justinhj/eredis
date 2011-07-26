@@ -39,6 +39,39 @@
 	  (two-lists-to-map keys values))
       nil)))
 
+
+(defun eredis-get-response()
+  "await response from redis and store it"
+  (if (accept-process-output *redis-process* *redis-timeout* 0 t)
+      *redis-response*
+    nil))
+
+(defun eredis-parse-multi-bulk(resp)
+  "parse the redis multi bulk response RESP and return the list of results"
+  (if (< (length resp) 2)
+      nil
+    (let ((elements (split-string resp "\r\n" t)))
+      (let ((count (string-to-number (subseq (first elements) 1)))
+	    (return-list nil))
+	(if (> count 0)
+	    (dolist (item (rest elements))
+	      (if (/= ?$ (string-to-char item))
+		  (setf return-list (cons item return-list)))))
+	(reverse
+	 return-list)))))
+
+(defun eredis-parse-bulk(resp)
+  "parse the redis bulk response RESP and return the result"
+  (if (= ?$ (string-to-char resp))
+      (let ((count (string-to-number (subseq resp 1))))
+	(if (and (> count 0)
+		 (string-match "\r\n" resp))
+	    (let ((body-start (match-end 0)))
+	      (when body-start
+		(subseq resp body-start (+ count body-start))))
+	  nil))
+    nil))
+
 (defun eredis-buffer-message(process message)
   "print a message to the redis process buffer"
   (save-excursion 
@@ -107,15 +140,12 @@
 	    nil)))))
 
 (defun eredis-get(key)
+  "redis GET"
   (if (and *redis-process* (eq *redis-state* 'open))
-      (process-send-string *redis-process* (format "GET %s\r\n" key))))
-
-(defun eredis-parse-bulk(resp)
-  "parse the redis bulk response RESP and return the result"
-  (let ((count (string-to-number (subseq resp 1))))
-    (let ((body-start (string-match "\r\n" resp)))
-      (when body-start
-	(subseq resp body-start (+ count body-start))))))
+      (progn 
+	(process-send-string *redis-process* (format "GET %s\r\n" key))
+	(let ((resp (eredis-get-response)))
+	  (eredis-parse-bulk resp)))))
 
 (defun eredis-info()
   (interactive)
@@ -124,26 +154,6 @@
 	(process-send-string *redis-process* "INFO\r\n")
 	(let ((resp (eredis-get-response)))
 	  (eredis-buffer-message *redis-process* (eredis-parse-bulk resp))))))
-
-(defun eredis-get-response()
-  "await response from redis and store it"
-  (if (accept-process-output *redis-process* *redis-timeout* 0 t)
-      *redis-response*
-    nil))
-
-(defun eredis-parse-multi-bulk(resp)
-  "parse the redis multi bulk response RESP and return the list of results"
-  (if (< (length resp) 2)
-      nil
-    (let ((elements (split-string resp "\r\n" t)))
-      (let ((count (string-to-number (subseq (first elements) 1)))
-	    (return-list nil))
-	(if (> count 0)
-	    (dolist (item (rest elements))
-	      (if (/= ?$ (string-to-char item))
-		  (setf return-list (cons item return-list)))))
-	(reverse
-	 return-list)))))
 
 ; http://redis.io/commands/keys
 
