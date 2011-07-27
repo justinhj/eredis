@@ -103,6 +103,14 @@ length is -1 as per spec"
 	  nil))
     nil))
 
+(defun eredis-command-returning-bulk(command &rest args)
+  "Send a COMMAND that has the bulk return type and return it to the user"
+  (if (and *redis-process* (eq *redis-state* 'open))
+      (progn 
+	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
+	(let ((resp (eredis-get-response)))
+	  (eredis-parse-bulk resp)))))
+
 (defun eredis-buffer-message(process message)
   "print a message to the redis process buffer"
   (save-excursion 
@@ -225,30 +233,46 @@ length is -1 as per spec"
 
 ;; http://redis.io/commands/object
 
-;(defun eredis-object(subcommand &rest args)
-;  "inspect the internals of Redis Objects associated with keys, best see the docs fo;r this one"
-;  (if (compare-strings "encoding" subcommand)
-;      (eredis-command-returning-integer "move
+(defun eredis-object(subcommand &rest args)
+  "inspect the internals of Redis Objects associated with keys, best see the docs fo;r this one"
+  (if (eq t (compare-strings "encoding" nil nil subcommand nil nil t))
+      (apply #'eredis-command-returning-bulk "object" subcommand args)
+    (apply #'eredis-command-returning-integer "object" subcommand args)))
+
+(defun eredis-persist(key)
+  "Remove the existing timeout on KEY and returns 1 if it succeeds 0 otherwise"
+  (eredis-command-returning-integer "persist" key))
+
+(defun eredis-randomkey()
+  "get a random key from the redis db"
+  (eredis-command-returning-bulk "randomkey"))
+
+(defun eredis-rename(key newkey)
+  "renames KEY as NEWKEY"
+  (eredis-command-returning-status "rename" key newkey))
+
+(defun eredis-renamenx(key newkey)
+  "renames KEY as NEWKEY only if NEWKEY does not yet exist"
+  (eredis-command-returning-status "renamenx" key newkey))
+
+(defun eredis-sort(key &rest args)
+  "call the redis sort command with the specified KEY and ARGS"
+  (apply #'eredis-command-returning-multibulk "sort" key args))
 
 (defun eredis-ttl(key)
   "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
   (eredis-command-returning-integer "ttl" key))
 
+(defun eredis-type(key)
+  "Get the type of KEY"
+  (eredis-command-returning-status "type" key))
+
 (defun eredis-get(key)
   "redis GET"
-  (if (and *redis-process* (eq *redis-state* 'open))
-      (progn 
-	(process-send-string *redis-process* (eredis-construct-unified-request "get" key))
-	(let ((resp (eredis-get-response)))
-	  (eredis-parse-bulk resp)))))
+  (eredis-command-returning-bulk "get" key))
 
 (defun eredis-info()
-  (interactive)
-  (if (and *redis-process* (eq *redis-state* 'open))
-      (progn
-	(process-send-string *redis-process* "INFO\r\n")
-	(let ((resp (eredis-get-response)))
-	  (eredis-buffer-message *redis-process* (eredis-parse-bulk resp))))))
+  (eredis-command-returning-bulk "info"))
 
 ; http://redis.io/commands/keys
 
