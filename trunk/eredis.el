@@ -1,7 +1,7 @@
 ;; eredis... A simple emacs interface to redis
 ;; See for info on the protocol http://redis.io/topics/protocol
 
-;; By Justin Heyes-Jones 2011
+;; (C)2011 Justin Heyes-Jones
 ;; This is released under the Gnu License v3. See http://www.gnu.org/licenses/gpl.txt
 
 ;; I addded support for editing and viewing keys as an org-table
@@ -39,7 +39,6 @@
 	  (two-lists-to-map keys values))
       nil)))
 
-
 (defun eredis-get-response()
   "await response from redis and store it"
   (if (accept-process-output *redis-process* *redis-timeout* 0 t)
@@ -47,18 +46,26 @@
     nil))
 
 (defun eredis-parse-multi-bulk(resp)
-  "parse the redis multi bulk response RESP and return the list of results"
-  (if (< (length resp) 2)
-      nil
-    (let ((elements (split-string resp "\r\n" t)))
-      (let ((count (string-to-number (subseq (first elements) 1)))
-	    (return-list nil))
-	(if (> count 0)
-	    (dolist (item (rest elements))
-	      (if (/= ?$ (string-to-char item))
-		  (setf return-list (cons item return-list)))))
-	(reverse
-	 return-list)))))
+  "parse the redis multi bulk response RESP and return the list of results. handles null entries when
+length is -1 as per spec"
+  (if (/= ?* (string-to-char resp))
+      (error "wrong start char")
+    (let ((num-values (string-to-number (subseq resp 1))))
+      (if (<= num-values 0)
+	  nil
+	(let ((return-list nil)
+	      (parse-pos (string-match "^\\$" resp)))
+	    (dotimes (n num-values)
+	      (let ((len (string-to-number (subseq resp (1+ parse-pos)))))
+		(string-match "\r\n" resp parse-pos)
+		(setf parse-pos (match-end 0))
+		(if (= len -1)
+		    (setf return-list (cons nil return-list))
+		  (unless (and parse-pos (> parse-pos 0))
+		    (error "parse error"))
+		  (setf return-list (cons (subseq resp parse-pos (+ len parse-pos)) return-list)))
+		(setf parse-pos (string-match "^\\$" resp parse-pos))))
+	    (reverse return-list))))))
 
 (defun eredis-parse-bulk(resp)
   "parse the redis bulk response RESP and return the result"
@@ -79,7 +86,7 @@
     (insert message)))
 
 (defun eredis-sentinel(process event)
-  "sentinal function for redis network process which monitors for events"
+  "sentinel function for redis network process which monitors for events"
   (eredis-buffer-message process (format "sentinel event %s" event))
   (cond 
    ((string-match "open" event)
@@ -93,6 +100,8 @@
   (when *redis-process*
     (delete-process *redis-process*)
     (setq *redis-state* 'closed)))
+
+;; Connect and disconnect functionality
 
 (defun eredis-hai(host port &optional no-wait)
   (interactive "sHost: \nsPort: \n")
