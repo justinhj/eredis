@@ -205,12 +205,19 @@ length is -1 as per spec"
     nil))
 
 
-(defun eredis-ping()
-  "Return true if you can ping the Redis server"
-  (interactive)
-  (eredis-command-returning-status "ping"))
+(defun eredis-get-map(keys)
+  "given a map M of key/value pairs, go to Redis to retrieve the values and set the 
+value to whatever it is in Redis (or nil if not found)"
+  (let ((num-args (1+ (hash-table-count m))))
+    (let ((command (format "*%d\r\n$4\r\nMGET\r\n" num-args))
+	  (key-value-string "")))
+      (maphash (lambda (k v)
+		 (setf key-value-string (concat key-value-string (format "$%d\r\n%s\r\n" (length k) k))))
+	       m)
+      (process-send-string *redis-process* (concat command key-value-string))
+      (eredis-get-response)))
 
-;; keys 
+;; key commands 
 
 (defun eredis-del(key &rest keys)
   (apply #'eredis-command-returning-integer "del" key keys))  
@@ -267,9 +274,119 @@ length is -1 as per spec"
   "Get the type of KEY"
   (eredis-command-returning-status "type" key))
 
+;; string commands
+
+(defun eredis-append(key value)
+  "Append VALUE to value of KEY"
+  (eredis-command-returning-integer "append" key value))
+
+(defun eredis-decr(key)
+  "decrement value of KEY"
+  (eredis-command-returning-integer "decr" key))
+
+(defun eredis-decrby(key decrement)
+  "decrement value of KEY by DECREMENT"
+  (eredis-command-returning-integer "decrby" key decrement))
+
 (defun eredis-get(key)
-  "redis GET"
+  "redis get"
   (eredis-command-returning-bulk "get" key))
+
+(defun eredis-getbit(key offset)
+  "redis getbit"
+  (eredis-command-returning-integer "getbit" key offset))
+
+(defun eredis-getrange(key start end)
+  "redis getrange"
+  (eredis-command-returning-bulk "getrange" key start end))
+
+(defun eredis-getset(key value)
+  "redis atomic set and get old value"
+  (eredis-command-returning-bulk "getset" key value))
+
+(defun eredis-incr(key)
+  "increment value of KEY"
+  (eredis-command-returning-integer "incr" key))
+
+(defun eredis-incrby(key increment)
+  "increment value of KEY by INCREMENT"
+  (eredis-command-returning-integer "incrby" key increment))
+
+; http://redis.io/commands/mget
+
+(defun eredis-mget(keys)
+  "return the values of the specified keys, or nil if not present"
+  (apply #'eredis-command-returning-multibulk "mget" keys))
+
+(defun eredis-mset(m)
+  "set the keys and values of the map M in Redis using mset"
+  (let ((key-values nil))
+    (maphash (lambda (k v)
+	       (push k key-values)
+	       (push v key-values))
+	     m)
+    (apply #'eredis-command-returning-status "mset" (reverse key-values))))
+
+(defun eredis-msetnx(m)
+  "set the keys and values of the map M in Redis using msetnx (only if all are not existing)"
+  (let ((key-values nil))
+    (maphash (lambda (k v)
+	       (push k key-values)
+	       (push v key-values))
+	     m)
+    (apply #'eredis-command-returning-integer "msetnx" (reverse key-values))))
+
+(defun eredis-set(k v)
+  "set the key K and value V in Redis"
+  (eredis-command-returning-status "set" k v))
+
+(defun eredis-setbit(key offset value)
+  "redis setbit"
+  (eredis-command-returning-integer "setbit" key offset value))
+
+(defun eredis-setex(key seconds value)
+  "eredis setex"
+  (eredis-command-returning-status "setex" key seconds value))
+
+(defun eredis-setnx(k v)
+  "set if not exist"
+  (eredis-command-returning-integer "setnx" k v))
+
+(defun eredis-setrange(key offset value)
+  "redis setrange"
+  (eredis-command-returning-integer "setrange" key offset value))
+
+(defun eredis-strlen(key)
+  "redis strlen"
+  (eredis-command-returning-integer "strlen" key))
+
+;; connection commands
+
+(defun eredis-auth(password)
+  "eredis auth"
+  (eredis-command-returning-status "auth" password))
+
+(defun eredis-echo(message)
+  "eredis echo"
+  (eredis-command-returning-bulk "echo" message))
+
+(defun eredis-ping()
+  "redis ping"
+  (interactive)
+  (eredis-command-returning-status "ping"))
+
+(defun eredis-quit()
+  "redis ping"
+  (interactive)
+  (eredis-command-returning-status "quit"))
+
+(defun eredis-select(index)
+  "redis select db with INDEX"
+  (interactive)
+  (eredis-command-returning-status "select" index))
+
+
+;; server commands 
 
 (defun eredis-info()
   (eredis-command-returning-bulk "info"))
@@ -280,42 +397,6 @@ length is -1 as per spec"
   "returns a list of keys where the key matches the provided
 pattern. see the link for the style of patterns"
   (eredis-command-returning-multibulk "keys" pattern))
-
-; http://redis.io/commands/mget
-
-(defun eredis-mget(keys)
-  "return the values of the specified keys, or nil if not present"
-  (apply #'eredis-command-returning-multibulk "mget" keys))
-
-(defun eredis-get-map(keys)
-  "given a map M of key/value pairs, go to Redis to retrieve the values and set the 
-value to whatever it is in Redis (or nil if not found)"
-  (let ((num-args (1+ (hash-table-count m))))
-    (let ((command (format "*%d\r\n$4\r\nMGET\r\n" num-args))
-	  (key-value-string "")))
-      (maphash (lambda (k v)
-		 (setf key-value-string (concat key-value-string (format "$%d\r\n%s\r\n" (length k) k))))
-	       m)
-      (process-send-string *redis-process* (concat command key-value-string))
-      (eredis-get-response)))
-
-(defun eredis-set(k v)
-  "set the key K and value V in Redis"
-  (eredis-command-returning-status "set" k v))
-
-(defun eredis-mset(m)
-  "set the keys and values of the map M in Redis"
-  (let ((num-args (1+ (* 2 (hash-table-count m)))))
-    (let ((command (format "*%d\r\n$4\r\nMSET\r\n" num-args))
-	  (key-value-string ""))
-      (maphash (lambda (k v)
-		 (setf key-value-string (concat key-value-string (format "$%d\r\n%s\r\n$%d\r\n%s\r\n" (length k) k (length v) v))))
-	       m)
-      (process-send-string *redis-process* (concat command key-value-string))
-      (let ((resp (eredis-get-response)))
-	(if (string-match "+OK" resp)
-	    t
-	  nil)))))
 
 (defun eredis-mset-region(beg end delimiter) 
   "Parse the current region using DELIMITER to split each line into a key value pair which
@@ -402,6 +483,12 @@ column to a value, returning the result as a dotted pair"
   (interactive)
   (let ((m (eredis-org-table-to-map)))
     (eredis-mset m)))
+
+(defun eredis-org-table-msetnx()
+  "with point in an org table convert the table to a map and send it to redis with msetnx"
+  (interactive)
+  (let ((m (eredis-org-table-to-map)))
+    (eredis-msetnx m)))
 
 (defun eredis-org-table-row-set()
   "with point in an org table set the key and value"
