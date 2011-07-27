@@ -31,6 +31,22 @@
   "insert a map M of key value pairs into the current buffer"
   (maphash (lambda (a b) (insert (format "%s,%s\n" a b))) m))
 
+(defun convert-numbers-to-strings(item)
+  (if (numberp item)
+      (number-to-string item)
+    item))
+
+(defun eredis-construct-unified-request(command &rest arguments)
+  "all redis commands are sent using this protocol"
+  (let ((num-args (+ 1 (length arguments))))
+    (if (> num-args 0)
+	(let ((req (format "*%d\r\n$%d\r\n%s\r\n" num-args (length command) command)))
+	  (dolist (item arguments)
+	    (setf item (convert-numbers-to-strings item))
+	    (setf req (concat req (format "$%d\r\n%s\r\n" (length item) item))))
+	  req)
+      nil)))
+
 (defun eredis-map-keys(key-expr)
   "take a glob expression like \"user.id.*\" and return the key/values of matching keys"
   (let ((keys (eredis-keys key-expr)))
@@ -66,6 +82,14 @@ length is -1 as per spec"
 		  (setf return-list (cons (subseq resp parse-pos (+ len parse-pos)) return-list)))
 		(setf parse-pos (string-match "^\\$" resp parse-pos))))
 	    (reverse return-list))))))
+
+(defun eredis-command-returning-multibulk(command &rest args)
+  "Send a COMMAND that has the multi bulk return type and return a list to the user"
+  (if (and *redis-process* (eq *redis-state* 'open))
+      (progn 
+	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
+	(let ((resp (eredis-get-response)))
+	  (eredis-parse-multi-bulk resp)))))
 
 (defun eredis-parse-bulk(resp)
   "parse the redis bulk response RESP and return the result"
@@ -134,25 +158,87 @@ length is -1 as per spec"
   (interactive)
   (eredis-delete-process))
 
+;; todo handle -blah error 
+
+(defun eredis-status-response-success-p(resp)
+  (= ?+ (string-to-char resp)))
+
+(defun eredis-trim-status-response(resp)
+  "strip the leading character +/- and the final carriage returns"
+  (let ((len (length resp)))
+    (subseq resp 1 (- len 2))))
+
+(defun eredis-parse-integer-response(resp)
+  "parse integer response type"
+  (string-to-number (subseq resp 1)))
+
+(defun eredis-command-returning-integer(command &rest args)
+  "Send a command that has the integer return type"
+  (if (and *redis-process* (eq *redis-state* 'open))
+      (progn 
+	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
+	(let ((resp (eredis-get-response)))
+	  (eredis-parse-integer-response resp)))
+    nil))
+
+(defun eredis-command-returning-status(command &rest args)
+  "Send a command that has the status code return type"
+  (if (and *redis-process* (eq *redis-state* 'open))
+      (progn 
+	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
+	(let ((resp (eredis-get-response)))
+	  (let ((ret-val (eredis-trim-status-response resp)))
+	    (if (eredis-status-response-success-p resp)
+		(progn
+		  (when (called-interactively-p)
+		    (message ret-val))
+		  ret-val)
+	      (error "command failed %s" ret-val)))))
+    nil))
+
+
 (defun eredis-ping()
   "Return true if you can ping the Redis server"
   (interactive)
-  (if (and *redis-process* (eq *redis-state* 'open))
-      (progn 
-	(process-send-string *redis-process* "PING\r\n")
-	(let ((resp (eredis-get-response)))
-	  (if (string-match "+PONG" resp)
-	      (progn
-		(when (called-interactively-p)
-		  (message "Pong"))
-		t)
-	    nil)))))
+  (eredis-command-returning-status "ping"))
+
+;; keys 
+
+(defun eredis-del(key &rest keys)
+  (apply #'eredis-command-returning-integer "del" key keys))  
+
+(defun eredis-exists(key)
+  "Returns 1 if key exists and 0 otherwise"
+  (eredis-command-returning-integer "exists" key))
+
+(defun eredis-expire(key seconds)
+  "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
+  (eredis-command-returning-integer "expire" key seconds))
+
+(defun eredis-expireat(key unix-time)
+  "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
+  (eredis-command-returning-integer "expireat" key unix-time))
+
+(defun eredis-move(key db)
+  "moves KEY to DB and returns 1 if it succeeds 0 otherwise"
+  (eredis-command-returning-integer "move" key db))
+
+;; http://redis.io/commands/object
+
+;(defun eredis-object(subcommand &rest args)
+;  "inspect the internals of Redis Objects associated with keys, best see the docs fo;r this one"
+;  (if (compare-strings "encoding" subcommand)
+;      (eredis-command-returning-integer "move
+
+(defun eredis-ttl(key)
+  "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
+  (eredis-command-returning-integer "ttl" key))
 
 (defun eredis-get(key)
   "redis GET"
   (if (and *redis-process* (eq *redis-state* 'open))
       (progn 
-	(process-send-string *redis-process* (format "GET %s\r\n" key))
+	(process-send-string *redis-process* (eredis-construct-unified-request "get" key))
 	(let ((resp (eredis-get-response)))
 	  (eredis-parse-bulk resp)))))
 
@@ -169,17 +255,13 @@ length is -1 as per spec"
 (defun eredis-keys(pattern)
   "returns a list of keys where the key matches the provided
 pattern. see the link for the style of patterns"
-  (process-send-string *redis-process* (concat "KEYS " pattern "\r\n"))
-  (let ((r (eredis-get-response)))
-    (eredis-parse-multi-bulk r)))
+  (eredis-command-returning-multibulk "keys" pattern))
 
 ; http://redis.io/commands/mget
 
 (defun eredis-mget(keys)
   "return the values of the specified keys, or nil if not present"
-  (process-send-string *redis-process* (concat "MGET " (mapconcat 'identity keys " ") "\r\n"))
-  (let ((r (eredis-get-response)))
-    (eredis-parse-multi-bulk r)))
+  (apply #'eredis-command-returning-multibulk "mget" keys))
 
 (defun eredis-get-map(keys)
   "given a map M of key/value pairs, go to Redis to retrieve the values and set the 
@@ -195,13 +277,7 @@ value to whatever it is in Redis (or nil if not found)"
 
 (defun eredis-set(k v)
   "set the key K and value V in Redis"
-  (let ((command "*3\r\n$3\r\nSET\r\n")
-	(key-value-string (format "$%d\r\n%s\r\n$%d\r\n%s\r\n" (length k) k (length v) v)))
-    (process-send-string *redis-process* (concat command key-value-string))
-    (let ((resp (eredis-get-response)))
-      (if (string-match "+OK" resp)
-	  t
-	nil))))
+  (eredis-command-returning-status "set" k v))
 
 (defun eredis-mset(m)
   "set the keys and values of the map M in Redis"
