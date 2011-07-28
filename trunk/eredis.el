@@ -84,13 +84,15 @@ commands like blpop which also have a timeout"
 (defun eredis-parse-multi-bulk(resp)
   "parse the redis multi bulk response RESP and return the list of results. handles null entries when
 length is -1 as per spec"
-  (if (/= ?* (string-to-char resp))
-      (error "wrong start char")
-    (let ((num-values (string-to-number (subseq resp 1))))
-      (if (<= num-values 0)
-	  nil
-	(let ((return-list nil)
-	      (parse-pos (string-match "^\\$" resp)))
+  (if (null resp) ;; resp is nil if timeout or other problem
+      nil
+    (if (= ?- (string-to-char resp))
+	(error "redis error: %s" (eredis-trim-status-response resp))
+      (let ((num-values (string-to-number (subseq resp 1))))
+	(if (<= num-values 0)
+	    nil
+	  (let ((return-list nil)
+		(parse-pos (string-match "^\\$" resp)))
 	    (dotimes (n num-values)
 	      (let ((len (string-to-number (subseq resp (1+ parse-pos)))))
 		(string-match "\r\n" resp parse-pos)
@@ -101,7 +103,7 @@ length is -1 as per spec"
 		    (error "parse error"))
 		  (setf return-list (cons (subseq resp parse-pos (+ len parse-pos)) return-list)))
 		(setf parse-pos (string-match "^\\$" resp parse-pos))))
-	    (reverse return-list))))))
+	    (reverse return-list)))))))
 
 (defun eredis-command-returning-multibulk(command &rest args)
   "Send a COMMAND that has the multi bulk return type and return a list to the user"
@@ -113,15 +115,17 @@ length is -1 as per spec"
 
 (defun eredis-parse-bulk(resp)
   "parse the redis bulk response RESP and return the result"
-  (if (= ?$ (string-to-char resp))
-      (let ((count (string-to-number (subseq resp 1))))
-	(if (and (> count 0)
-		 (string-match "\r\n" resp))
-	    (let ((body-start (match-end 0)))
-	      (when body-start
-		(subseq resp body-start (+ count body-start))))
-	  nil))
-    nil))
+  (if (null resp)
+      nil
+    (if (= ?$ (string-to-char resp))
+	(let ((count (string-to-number (subseq resp 1))))
+	  (if (and (> count 0)
+		   (string-match "\r\n" resp))
+	      (let ((body-start (match-end 0)))
+		(when body-start
+		  (subseq resp body-start (+ count body-start))))
+	    nil))
+      nil)))
 
 (defun eredis-command-returning-bulk(command &rest args)
   "Send a COMMAND that has the bulk return type and return it to the user"
@@ -221,9 +225,8 @@ length is -1 as per spec"
 		  (when (called-interactively-p)
 		    (message ret-val))
 		  ret-val)
-	      (error "command failed %s" ret-val)))))
+	      (error "redis error: %s" ret-val)))))
     nil))
-
 
 (defun eredis-get-map(keys)
   "given a map M of key/value pairs, go to Redis to retrieve the values and set the 
@@ -441,13 +444,63 @@ pattern. see the link for the style of patterns"
   "Prepend value(s) to a list stored by KEY"
   (apply #'eredis-command-returning-integer "lpush" key value values))
 
+(defun eredis-rpush(key value &rest values)
+  "Append value(s) to a list stored by KEY"
+  (apply #'eredis-command-returning-integer "rpush" key value values))
+
+(defun eredis-lpushx(key value)
+  "Prepend value(s) to a list stored by KEY if it doesn't exist already"
+  (eredis-command-returning-integer "lpushx" key value))
+
+(defun eredis-rpushx(key value)
+  "Append value(s) to a list stored by KEY if it doesn't exist already"
+  (eredis-command-returning-integer "rpushx" key value))
+
 (defun eredis-lindex(key index)
   "list element INDEX to a list stored by KEY"
   (eredis-command-returning-bulk "lindex" key index))
 
 (defun eredis-blpop(key &rest rest)
-  "blocking left pop of multiple lists, res is actually as many keys as you want and a timeout"
+  "blocking left pop of multiple lists, rest is actually as many keys as you want and a timeout"
   (apply #'eredis-command-returning-multibulk "blpop" key rest))
+
+(defun eredis-brpop(key &rest rest)
+  "blocking right pop of multiple lists, rest is actually as many keys as you want and a timeout"
+  (apply #'eredis-command-returning-multibulk "brpop" key rest))
+
+(defun eredis-lrange(key start stop)
+  "redis lrange"
+  (eredis-command-returning-multibulk "lrange" key start stop))
+
+(defun eredis-linsert(key position pivot value)
+  "redis linsert"
+  (eredis-command-returning-integer "linsert" key position pivot value))
+
+(defun eredis-brpoplpush(source destination timeout)
+  "redis brpoplpush"
+  (eredis-command-returning-bulk "brpoplpush" source destination timeout))
+
+(defun eredis-rpoplpush(source destination timeout)
+  "redis rpoplpush"
+  (eredis-command-returning-bulk "rpoplpush" source destination))
+
+(defun eredis-lrem(key count value)
+  "redis lrem"
+  (eredis-command-returning-integer "lrem" key count value))
+
+(defun eredis-lset(key index value)
+  "redis lset"
+  (eredis-command-returning-status "lset" key index value))
+
+(defun eredis-ltrim(key start stop)
+  "redis ltrim"
+  (eredis-command-returning-status "ltrim" key start stop))
+
+(defun eredis-rpop(key)
+  "right pop of list"
+  (eredis-command-returning-bulk "rpop" key))
+
+
 
 ;; connection commands
 
