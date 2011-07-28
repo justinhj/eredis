@@ -51,10 +51,16 @@ commands like blpop which also have a timeout"
   "insert a map M of key value pairs into the current buffer"
   (maphash (lambda (a b) (insert (format "%s,%s\n" a b))) m))
 
-(defun convert-numbers-to-strings(item)
-  (if (numberp item)
-      (number-to-string item)
-    item))
+(defun stringify-numbers-and-symbols(item)
+  (cond 
+   ((numberp item)
+    (number-to-string item))
+   ((symbolp item)
+    (symbol-name item))
+   ((stringp item)
+    item)
+   (t
+    (error "unsupported type: %s"))))
 
 (defun eredis-construct-unified-request(command &rest arguments)
   "all redis commands are sent using this protocol"
@@ -62,7 +68,7 @@ commands like blpop which also have a timeout"
     (if (> num-args 0)
 	(let ((req (format "*%d\r\n$%d\r\n%s\r\n" num-args (length command) command)))
 	  (dolist (item arguments)
-	    (setf item (convert-numbers-to-strings item))
+	    (setf item (stringify-numbers-and-symbols item))
 	    (setf req (concat req (format "$%d\r\n%s\r\n" (length item) item))))
 	  req)
       nil)))
@@ -556,10 +562,80 @@ pattern. see the link for the style of patterns"
 
 (defun eredis-sunionstore(destination key &rest keys)
   "redis sunionstore"
-  (apply #'eredis-command-returning-multibulk "sunionstore" destination key keys))
+  (apply #'eredis-command-returning-integer "sunionstore" destination key keys))
 
 
+;; sorted set commands
 
+(defun eredis-zadd(key score member)
+  "redis zadd"
+  (eredis-command-returning-integer "zadd" key score member))
+
+(defun eredis-zcard(key)
+  "redis zcard"
+  (eredis-command-returning-integer "zcard" key))
+
+(defun eredis-zcount(key min max)
+  "redis zcount"
+  (eredis-command-returning-integer "zcount" key min max))
+
+(defun eredis-zincrby(key increment member)
+  "redis zincrby"
+  (eredis-command-returning-bulk "zincrby" key increment member))
+
+(defun eredis-zinterstore(destination numkeys key &rest rest)
+  "redis zinterstore"
+  (apply #'eredis-command-returning-integer "zinterstore" destination numkeys key rest))
+
+(defun eredis-zrange(key start stop &optional withscores)
+  "eredis zrange. withscores can be the string \"withscores\", the symbol 'withscores"
+  (if (null withscores)
+      (eredis-command-returning-multibulk "zrange" key start stop)
+    (eredis-command-returning-multibulk "zrange" key start stop withscores)))
+
+(defun eredis-zrangebyscore(key min max &rest rest)
+  "eredis zrangebyscore"
+  (apply #'eredis-command-returning-multibulk "zrangebyscore" key min max rest))
+
+(defun eredis-zrank(key member)
+  "redis zrank"
+  (eredis-command-returning-integer "zrank" key member))
+
+(defun eredis-zrem(key member)
+  "redis zrem"
+  (eredis-command-returning-integer "zrem" key member))
+
+(defun eredis-zremrangebyrank(key start stop)
+  "redis zremrangebyrank"
+  (eredis-command-returning-integer "zremrangebyrank" key start stop))
+
+(defun eredis-zremrangebyscore(key min max)
+  "redis zremrangebyscore"
+  (eredis-command-returning-integer "zremrangebyscore" key min max))
+
+(defun eredis-zrevrange(key start stop &optional withscores)
+  "eredis zrevrange. withscores can be the string \"withscores\", the symbol 'withscores"
+  (if (null withscores)
+      (eredis-command-returning-multibulk "zrevrange" key start stop)
+    (eredis-command-returning-multibulk "zrevrange" key start stop withscores)))
+
+(defun eredis-zrevrangebyscore(key min max &rest rest)
+  "eredis zrevrangebyscore"
+  (apply #'eredis-command-returning-multibulk "zrevrangebyscore" key min max rest))
+
+(defun eredis-zrevrank(key member)
+  "redis zrevrank"
+  (eredis-command-returning-integer "zrevrank" key member))
+
+(defun eredis-zscore(key member)
+  "redis zscore"
+  (eredis-command-returning-bulk "zscore" key member))
+
+(defun eredis-zunionstore(destination numkeys key &rest rest)
+  "redis zunionstore"
+  (apply #'eredis-command-returning-integer destination numkeys key rest))
+
+;; pub/sub commands
 
 
 
