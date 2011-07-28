@@ -500,6 +500,69 @@ pattern. see the link for the style of patterns"
   "right pop of list"
   (eredis-command-returning-bulk "rpop" key))
 
+;; set commands
+
+(defun eredis-sadd(key member &rest members)
+  "redis add to set"
+  (apply #'eredis-command-returning-integer "sadd" key member members))
+
+(defun eredis-scard(key)
+  "redis scard"
+  (eredis-command-returning-integer "scard" key))
+
+(defun eredis-sdiff(key &rest keys)
+  "redis sdiff"
+  (apply #'eredis-command-returning-multibulk "sdiff" key keys))
+
+(defun eredis-sdiffstore(destination key &rest keys)
+  "redis sdiffstore"
+  (apply #'eredis-command-returning-integer "sdiffstore" destination key keys))
+
+(defun eredis-sinter(key &rest keys)
+  "redis sinter"
+  (apply #'eredis-command-returning-multibulk "sinter" key keys))
+
+(defun eredis-sinterstore(destination key &rest keys)
+  "redis sinterstore"
+  (apply #'eredis-command-returning-integer "sinterstore" destination key keys))
+
+(defun eredis-sismember(key member)
+  "redis sdiffstore"
+  (eredis-command-returning-integer "sismember" key member))
+
+(defun eredis-smembers(key)
+  "redis smembers"
+  (eredis-command-returning-multibulk "smembers" key))
+
+(defun eredis-smove(source destination member)
+  "redis smove"
+  (eredis-command-returning-integer "smove" source destination member))
+
+(defun eredis-spop(key)
+  "redis spop"
+  (eredis-command-returning-bulk "spop" key))
+
+(defun eredis-srandmember(key)
+  "redis srandmember"
+  (eredis-command-returning-bulk "srandmember" key))
+
+(defun eredis-srem(key member &rest members)
+  "redis srem"
+  (apply #'eredis-command-returning-integer "srem" key member members))
+
+(defun eredis-sunion(key &rest keys)
+  "redis sunion"
+  (apply #'eredis-command-returning-multibulk "sunion" key keys))
+
+(defun eredis-sunionstore(destination key &rest keys)
+  "redis sunionstore"
+  (apply #'eredis-command-returning-multibulk "sunionstore" destination key keys))
+
+
+
+
+
+
 
 
 ;; connection commands
