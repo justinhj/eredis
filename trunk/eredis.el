@@ -10,9 +10,14 @@
 (defvar *redis-process* nil "Current Redis client process")
 (defvar *redis-state* nil "Statue of the connection")
 (defvar *redis-response* nil "Stores response of last Redis command")
-(defvar *redis-timeout* 10 "Timeout on the client in seconds when waiting for Redis")
+(defvar *redis-timeout* 15 "Timeout on the client in seconds when waiting for Redis")
 
 ;; UTILS
+
+(defun eredis-set-timeout(seconds)
+  "set how long emacs will wait for a response from redit, pay attention to this if using blocking 
+commands like blpop which also have a timeout" 
+  (setf *redis-timeout* seconds))
 
 (defun two-lists-to-map(lst1 lst2)
   "take a list of keys LST1 and a list of values LST2 and make a hashmap"
@@ -20,6 +25,21 @@
     (mapc (lambda (n) (puthash (car n) (cdr n) retmap))
 	  (map 'list (lambda (a b) (cons a b)) lst1 lst2))
     retmap))
+
+(defun flatten-map(m)
+  "flatten the key values of map M to a list of the form key1 value1 key2 value2..."
+  (let ((key-values nil))
+    (maphash (lambda (k v)
+	       (push k key-values)
+	       (push v key-values))
+	     m)
+    (reverse key-values)))
+
+(defun eredis-parse-map-or-list-arg(a)
+  "handle when an argument can be passed as a hash table or a list of key values"
+  (if (hash-table-p a)
+      (flatten-map a)
+    a))
 
 ;; helper function from http://www.emacswiki.org/emacs/ElispCookbook#toc5
 (defun chomp (str)
@@ -56,7 +76,7 @@
       nil)))
 
 (defun eredis-get-response()
-  "await response from redis and store it"
+  "await response from redis and store it in *redis-response*. If it times out it will return nil"
   (if (accept-process-output *redis-process* *redis-timeout* 0 t)
       *redis-response*
     nil))
@@ -234,6 +254,13 @@ value to whatever it is in Redis (or nil if not found)"
   "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
   (eredis-command-returning-integer "expireat" key unix-time))
 
+; http://redis.io/commands/keys
+
+(defun eredis-keys(pattern)
+  "returns a list of keys where the key matches the provided
+pattern. see the link for the style of patterns"
+  (eredis-command-returning-multibulk "keys" pattern))
+
 (defun eredis-move(key db)
   "moves KEY to DB and returns 1 if it succeeds 0 otherwise"
   (eredis-command-returning-integer "move" key db))
@@ -320,21 +347,11 @@ value to whatever it is in Redis (or nil if not found)"
 
 (defun eredis-mset(m)
   "set the keys and values of the map M in Redis using mset"
-  (let ((key-values nil))
-    (maphash (lambda (k v)
-	       (push k key-values)
-	       (push v key-values))
-	     m)
-    (apply #'eredis-command-returning-status "mset" (reverse key-values))))
+  (apply #'eredis-command-returning-status "mset" (eredis-parse-map-or-list-arg m)))
 
 (defun eredis-msetnx(m)
   "set the keys and values of the map M in Redis using msetnx (only if all are not existing)"
-  (let ((key-values nil))
-    (maphash (lambda (k v)
-	       (push k key-values)
-	       (push v key-values))
-	     m)
-    (apply #'eredis-command-returning-integer "msetnx" (reverse key-values))))
+    (apply #'eredis-command-returning-integer "msetnx" (eredis-parse-map-or-list-arg m)))
 
 (defun eredis-set(k v)
   "set the key K and value V in Redis"
@@ -359,6 +376,78 @@ value to whatever it is in Redis (or nil if not found)"
 (defun eredis-strlen(key)
   "redis strlen"
   (eredis-command-returning-integer "strlen" key))
+
+;; hash commands
+
+(defun eredis-hget(key field)
+  "redis hget"
+  (eredis-command-returning-bulk "hget" key field))
+
+(defun eredis-hset(key field value)
+  "redis hset"
+  (eredis-command-returning-integer "hset" key field value))
+
+(defun eredis-hsetnx(key field value)
+  "redis hsetnx"
+  (eredis-command-returning-integer "hsetnx" key field value))
+
+(defun eredis-hmget(key field &rest fields)
+  "redis hmget"
+  (apply #'eredis-command-returning-multibulk "hmget" key field fields))
+
+(defun eredis-hmset(key m)
+  "redis hmset set multiple key values on the key KEY using an emacs lisp map M or list of key values"
+  (apply #'eredis-command-returning-status "hmset" key (eredis-parse-map-or-list-arg m)))
+
+(defun eredis-hincrby(key field integer)
+  "increment FIELD on KEY by INTEGER"
+  (eredis-command-returning-integer "hincrby" key field integer))
+
+(defun eredis-hexists(key field)
+  "redis hexists"
+  (eredis-command-returning-integer "hexists" key field))
+
+(defun eredis-hdel(key field)
+  "redis hdel"
+  (eredis-command-returning-integer "hdel" key field))
+
+(defun eredis-hlen(key)
+  "redis hlen"
+  (eredis-command-returning-integer "hlen" key))
+
+(defun eredis-hkeys(key)
+  "redis hkeys"
+  (eredis-command-returning-multibulk "hkeys" key))
+
+(defun eredis-hvals(key)
+  "redis hvals"
+  (eredis-command-returning-multibulk "hvals" key))
+
+(defun eredis-hgetall(key)
+  "redis hgetall"
+  (eredis-command-returning-multibulk "hgetall" key))
+
+;; list commands
+
+(defun eredis-llen(key)
+  "length of list"
+  (eredis-command-returning-integer "llen" key))
+
+(defun eredis-lpop(key)
+  "list pop first element"
+  (eredis-command-returning-bulk "lpop" key))
+
+(defun eredis-lpush(key value &rest values)
+  "Prepend value(s) to a list stored by KEY"
+  (apply #'eredis-command-returning-integer "lpush" key value values))
+
+(defun eredis-lindex(key index)
+  "list element INDEX to a list stored by KEY"
+  (eredis-command-returning-bulk "lindex" key index))
+
+(defun eredis-blpop(key &rest rest)
+  "blocking left pop of multiple lists, res is actually as many keys as you want and a timeout"
+  (apply #'eredis-command-returning-multibulk "blpop" key rest))
 
 ;; connection commands
 
@@ -385,18 +474,12 @@ value to whatever it is in Redis (or nil if not found)"
   (interactive)
   (eredis-command-returning-status "select" index))
 
-
 ;; server commands 
 
 (defun eredis-info()
   (eredis-command-returning-bulk "info"))
 
-; http://redis.io/commands/keys
 
-(defun eredis-keys(pattern)
-  "returns a list of keys where the key matches the provided
-pattern. see the link for the style of patterns"
-  (eredis-command-returning-multibulk "keys" pattern))
 
 (defun eredis-mset-region(beg end delimiter) 
   "Parse the current region using DELIMITER to split each line into a key value pair which
