@@ -16,157 +16,156 @@ Download the latest version via svn or from the downloads page. Add the path you
 
 Use emacs function help (C-h f eredis- TAB) should give you a good idea what you can do...
 
-
-;; key commands 
-(defun eredis-del(key &rest keys)
-(defun eredis-exists(key)
-(defun eredis-expire(key seconds)
-(defun eredis-expireat(key unix-time)
-(defun eredis-keys(pattern)
-(defun eredis-move(key db)
-;; http://redis.io/commands/object
-(defun eredis-object(subcommand &rest args)
-(defun eredis-persist(key)
-(defun eredis-randomkey()
-(defun eredis-rename(key newkey)
-(defun eredis-renamenx(key newkey)
-(defun eredis-sort(key &rest args)
-(defun eredis-ttl(key)
-(defun eredis-type(key)
-;; string commands
-(defun eredis-append(key value)
-(defun eredis-decr(key)
-(defun eredis-decrby(key decrement)
-(defun eredis-get(key)
-(defun eredis-getbit(key offset)
-(defun eredis-getrange(key start end)
-(defun eredis-getset(key value)
-(defun eredis-incr(key)
-(defun eredis-incrby(key increment)
-(defun eredis-mget(keys)
-(defun eredis-mset(m)
-(defun eredis-msetnx(m)
-(defun eredis-set(k v)
-(defun eredis-setbit(key offset value)
-(defun eredis-setex(key seconds value)
-(defun eredis-setnx(k v)
-(defun eredis-setrange(key offset value)
-(defun eredis-strlen(key)
-;; hash commands
-(defun eredis-hget(key field)
-(defun eredis-hset(key field value)
-(defun eredis-hsetnx(key field value)
-(defun eredis-hmget(key field &rest fields)
-(defun eredis-hmset(key m)
-(defun eredis-hincrby(key field integer)
-(defun eredis-hexists(key field)
-(defun eredis-hdel(key field)
-(defun eredis-hlen(key)
-(defun eredis-hkeys(key)
-(defun eredis-hvals(key)
-(defun eredis-hgetall(key)
-;; list commands
-(defun eredis-llen(key)
-(defun eredis-lpop(key)
-(defun eredis-lpush(key value &rest values)
-(defun eredis-rpush(key value &rest values)
-(defun eredis-lpushx(key value)
-(defun eredis-rpushx(key value)
-(defun eredis-lindex(key index)
-(defun eredis-blpop(key &rest rest)
-(defun eredis-brpop(key &rest rest)
-(defun eredis-lrange(key start stop)
-(defun eredis-linsert(key position pivot value)
-(defun eredis-brpoplpush(source destination timeout)
-(defun eredis-rpoplpush(source destination timeout)
-(defun eredis-lrem(key count value)
-(defun eredis-lset(key index value)
-(defun eredis-ltrim(key start stop)
-(defun eredis-rpop(key)
-;; set commands
-(defun eredis-sadd(key member &rest members)
-(defun eredis-scard(key)
-(defun eredis-sdiff(key &rest keys)
-(defun eredis-sdiffstore(destination key &rest keys)
-(defun eredis-sinter(key &rest keys)
-(defun eredis-sinterstore(destination key &rest keys)
-(defun eredis-sismember(key member)
-(defun eredis-smembers(key)
-(defun eredis-smove(source destination member)
-(defun eredis-spop(key)
-(defun eredis-srandmember(key)
-(defun eredis-srem(key member &rest members)
-(defun eredis-sunion(key &rest keys)
-(defun eredis-sunionstore(destination key &rest keys)
-;; sorted set commands
-(defun eredis-zadd(key score member)
-(defun eredis-zcard(key)
-(defun eredis-zcount(key min max)
-(defun eredis-zincrby(key increment member)
-(defun eredis-zinterstore(destination numkeys key &rest rest)
-(defun eredis-zrange(key start stop &optional withscores)
-(defun eredis-zrangebyscore(key min max &rest rest)
-(defun eredis-zrank(key member)
-(defun eredis-zrem(key member)
-(defun eredis-zremrangebyrank(key start stop)
-(defun eredis-zremrangebyscore(key min max)
-(defun eredis-zrevrange(key start stop &optional withscores)
-(defun eredis-zrevrangebyscore(key min max &rest rest)
-(defun eredis-zrevrank(key member)
-(defun eredis-zscore(key member)
-(defun eredis-zunionstore(destination numkeys key &rest rest)
-;; pub/sub commands
-;; Warning: these aren't working very well yet. Need to write a custom response handler 
-;; to handle replies from the publish subscribe commands. They have differences, for 
-;; example multiple bulk messages come at once. 
-(defun eredis-publish(channel message)
-(defun eredis-subscribe(channel &rest channels)
-(defun eredis-psubscribe(pattern &rest patterns)
-(defun eredis-unsubscribe(channel &rest channels)
-(defun eredis-punsubscribe(pattern &rest patterns)
-(defun eredis-await-message()
-;; transaction commands
-(defun eredis-discard()
-(defun eredis-multi()
-;; TODO this returns a multibulk which in turn will contain a sequence of responses to commands
-;; executed. Best way to handle this is probably to return a list of responses
-;; Also need to fix the parser to handle numeric results in a multibulk response
-;; which is the same issue I'm seeing with publish/subscribe results
-(defun eredis-exec()
-(defun eredis-watch(key &rest keys)
-(defun eredis-unwatch()
-;; connection commands
-(defun eredis-auth(password)
-(defun eredis-echo(message)
-(defun eredis-ping()
-(defun eredis-quit()
-(defun eredis-select(index)
-;; server commands 
-(defun eredis-bgrewriteaof()
-(defun eredis-bgsave()
-(defun eredis-config-get(parameter)
-(defun eredis-config-set(parameter value)
-(defun eredis-config-resetstat()
-(defun eredis-dbsize()
-(defun eredis-debug-object(key)
-(defun eredis-debug-segfault()
-(defun eredis-flushall()
-(defun eredis-flushdb()
-;; TODO the response from this is a single bulk response but it could be further parsed into a map
-;; It uses : to delimit the keys from values
-(defun eredis-info()
-(defun eredis-lastsave()
-;; TODO this needs a bit of work. This will get only the first command. Need to enter a loop 
-;; and let the user terminate monitor mode. Also should handle repeated status type 
-;; responses until monitor is done. Dumping to a buffer may make sense here
-;; and with the subcribe/publish stuff
-(defun eredis-monitor()
-(defun eredis-save()
-;; TODO this returns the last response again. Should handle the connection 
-;; termination correctly
-(defun eredis-shutdown()
-(defun eredis-slaveof(host port)
-;; This is in the docs but not in the server I'm using 
-;; (defun eredis-slowlog-len()
-;;   (eredis-command-returning-integer "slowlog" "len"))
-(defun eredis-sync()
+;; key commands <br>
+(defun eredis-del(key &rest keys)<br>
+(defun eredis-exists(key)<br>
+(defun eredis-expire(key seconds)<br>
+(defun eredis-expireat(key unix-time)<br>
+(defun eredis-keys(pattern)<br>
+(defun eredis-move(key db)<br>
+;; http://redis.io/commands/object<br>
+(defun eredis-object(subcommand &rest args)<br>
+(defun eredis-persist(key)<br>
+(defun eredis-randomkey()<br>
+(defun eredis-rename(key newkey)<br>
+(defun eredis-renamenx(key newkey)<br>
+(defun eredis-sort(key &rest args)<br>
+(defun eredis-ttl(key)<br>
+(defun eredis-type(key)<br>
+;; string commands<br>
+(defun eredis-append(key value)<br>
+(defun eredis-decr(key)<br>
+(defun eredis-decrby(key decrement)<br>
+(defun eredis-get(key)<br>
+(defun eredis-getbit(key offset)<br>
+(defun eredis-getrange(key start end)<br>
+(defun eredis-getset(key value)<br>
+(defun eredis-incr(key)<br>
+(defun eredis-incrby(key increment)<br>
+(defun eredis-mget(keys)<br>
+(defun eredis-mset(m)<br>
+(defun eredis-msetnx(m)<br>
+(defun eredis-set(k v)<br>
+(defun eredis-setbit(key offset value)<br>
+(defun eredis-setex(key seconds value)<br>
+(defun eredis-setnx(k v)<br>
+(defun eredis-setrange(key offset value)<br>
+(defun eredis-strlen(key)<br>
+;; hash commands<br>
+(defun eredis-hget(key field)<br>
+(defun eredis-hset(key field value)<br>
+(defun eredis-hsetnx(key field value)<br>
+(defun eredis-hmget(key field &rest fields)<br>
+(defun eredis-hmset(key m)<br>
+(defun eredis-hincrby(key field integer)<br>
+(defun eredis-hexists(key field)<br>
+(defun eredis-hdel(key field)<br>
+(defun eredis-hlen(key)<br>
+(defun eredis-hkeys(key)<br>
+(defun eredis-hvals(key)<br>
+(defun eredis-hgetall(key)<br>
+;; list commands<br>
+(defun eredis-llen(key)<br>
+(defun eredis-lpop(key)<br>
+(defun eredis-lpush(key value &rest values)<br>
+(defun eredis-rpush(key value &rest values)<br>
+(defun eredis-lpushx(key value)<br>
+(defun eredis-rpushx(key value)<br>
+(defun eredis-lindex(key index)<br>
+(defun eredis-blpop(key &rest rest)<br>
+(defun eredis-brpop(key &rest rest)<br>
+(defun eredis-lrange(key start stop)<br>
+(defun eredis-linsert(key position pivot value)<br>
+(defun eredis-brpoplpush(source destination timeout)<br>
+(defun eredis-rpoplpush(source destination timeout)<br>
+(defun eredis-lrem(key count value)<br>
+(defun eredis-lset(key index value)<br>
+(defun eredis-ltrim(key start stop)<br>
+(defun eredis-rpop(key)<br>
+;; set commands<br>
+(defun eredis-sadd(key member &rest members)<br>
+(defun eredis-scard(key)<br>
+(defun eredis-sdiff(key &rest keys)<br>
+(defun eredis-sdiffstore(destination key &rest keys)<br>
+(defun eredis-sinter(key &rest keys)<br>
+(defun eredis-sinterstore(destination key &rest keys)<br>
+(defun eredis-sismember(key member)<br>
+(defun eredis-smembers(key)<br>
+(defun eredis-smove(source destination member)<br>
+(defun eredis-spop(key)<br>
+(defun eredis-srandmember(key)<br>
+(defun eredis-srem(key member &rest members)<br>
+(defun eredis-sunion(key &rest keys)<br>
+(defun eredis-sunionstore(destination key &rest keys)<br>
+;; sorted set commands<br>
+(defun eredis-zadd(key score member)<br>
+(defun eredis-zcard(key)<br>
+(defun eredis-zcount(key min max)<br>
+(defun eredis-zincrby(key increment member)<br>
+(defun eredis-zinterstore(destination numkeys key &rest rest)<br>
+(defun eredis-zrange(key start stop &optional withscores)<br>
+(defun eredis-zrangebyscore(key min max &rest rest)<br>
+(defun eredis-zrank(key member)<br>
+(defun eredis-zrem(key member)<br>
+(defun eredis-zremrangebyrank(key start stop)<br>
+(defun eredis-zremrangebyscore(key min max)<br>
+(defun eredis-zrevrange(key start stop &optional withscores)<br>
+(defun eredis-zrevrangebyscore(key min max &rest rest)<br>
+(defun eredis-zrevrank(key member)<br>
+(defun eredis-zscore(key member)<br>
+(defun eredis-zunionstore(destination numkeys key &rest rest)<br>
+;; pub/sub commands<br>
+;; Warning: these aren't working very well yet. Need to write a custom response handler <br>
+;; to handle replies from the publish subscribe commands. They have differences, for <br>
+;; example multiple bulk messages come at once. <br>
+(defun eredis-publish(channel message)<br>
+(defun eredis-subscribe(channel &rest channels)<br>
+(defun eredis-psubscribe(pattern &rest patterns)<br>
+(defun eredis-unsubscribe(channel &rest channels)<br>
+(defun eredis-punsubscribe(pattern &rest patterns)<br>
+(defun eredis-await-message()<br>
+;; transaction commands<br>
+(defun eredis-discard()<br>
+(defun eredis-multi()<br>
+;; TODO this returns a multibulk which in turn will contain a sequence of responses to commands<br>
+;; executed. Best way to handle this is probably to return a list of responses<br>
+;; Also need to fix the parser to handle numeric results in a multibulk response<br>
+;; which is the same issue I'm seeing with publish/subscribe results<br>
+(defun eredis-exec()<br>
+(defun eredis-watch(key &rest keys)<br>
+(defun eredis-unwatch()<br>
+;; connection commands<br>
+(defun eredis-auth(password)<br>
+(defun eredis-echo(message)<br>
+(defun eredis-ping()<br>
+(defun eredis-quit()<br>
+(defun eredis-select(index)<br>
+;; server commands <br>
+(defun eredis-bgrewriteaof()<br>
+(defun eredis-bgsave()<br>
+(defun eredis-config-get(parameter)<br>
+(defun eredis-config-set(parameter value)<br>
+(defun eredis-config-resetstat()<br>
+(defun eredis-dbsize()<br>
+(defun eredis-debug-object(key)<br>
+(defun eredis-debug-segfault()<br>
+(defun eredis-flushall()<br>
+(defun eredis-flushdb()<br>
+;; TODO the response from this is a single bulk response but it could be further parsed into a map<br>
+;; It uses : to delimit the keys from values<br>
+(defun eredis-info()<br>
+(defun eredis-lastsave()<br>
+;; TODO this needs a bit of work. This will get only the first command. Need to enter a loop <br>
+;; and let the user terminate monitor mode. Also should handle repeated status type <br>
+;; responses until monitor is done. Dumping to a buffer may make sense here<br>
+;; and with the subcribe/publish stuff<br>
+(defun eredis-monitor()<br>
+(defun eredis-save()<br>
+;; TODO this returns the last response again. Should handle the connection <br>
+;; termination correctly<br>
+(defun eredis-shutdown()<br>
+(defun eredis-slaveof(host port)<br>
+;; This is in the docs but not in the server I'm using <br>
+;; (defun eredis-slowlog-len()<br>
+;;   (eredis-command-returning-integer "slowlog" "len"))<br>
+(defun eredis-sync()<br>
