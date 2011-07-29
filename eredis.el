@@ -130,7 +130,10 @@ length is -1 as per spec"
 		(when body-start
 		  (subseq resp body-start (+ count body-start))))
 	    nil))
-      nil)))
+      (if (= ?- (string-to-char resp))
+	  (error "redis error: %s" (eredis-trim-status-response resp))
+	nil))))
+      
 
 (defun eredis-command-returning-bulk(command &rest args)
   "Send a COMMAND that has the bulk return type and return it to the user"
@@ -722,10 +725,70 @@ with an error until then"
 
 ;; server commands 
 
+(defun eredis-bgrewriteaof()
+  (eredis-command-returning-status "bgrewriteaof"))
+
+(defun eredis-bgsave()
+  (eredis-command-returning-status "bgsave"))
+
+(defun eredis-config-get(parameter)
+  (eredis-command-returning-multibulk "config" "get" parameter))
+
+(defun eredis-config-set(parameter value)
+  (eredis-command-returning-status "config" "set" parameter value))
+
+(defun eredis-config-resetstat()
+  (eredis-command-returning-status "config" "resetstat"))
+
+(defun eredis-dbsize()
+  (eredis-command-returning-integer "dbsize"))
+
+(defun eredis-debug-object(key)
+  (eredis-command-returning-status "debug" "object" key))
+
+(defun eredis-debug-segfault()
+  (eredis-command-returning-status "debug" "segfault"))
+
+(defun eredis-flushall()
+  (eredis-command-returning-status "flushall"))
+
+(defun eredis-flushdb()
+  (eredis-command-returning-status "flushdb"))
+
+;; TODO the response from this is a single bulk response but it could be further parsed into a map
+;; It uses : to delimit the keys from values
 (defun eredis-info()
   (eredis-command-returning-bulk "info"))
 
+(defun eredis-lastsave()
+  (eredis-command-returning-integer "lastsave"))
 
+;; TODO this needs a bit of work. This will get only the first command. Need to enter a loop 
+;; and let the user terminate monitor mode. Also should handle repeated status type 
+;; responses until monitor is done. Dumping to a buffer may make sense here
+;; and with the subcribe/publish stuff
+(defun eredis-monitor()
+  (eredis-command-returning-status "monitor"))
+
+(defun eredis-save()
+  (eredis-command-returning-status "save"))
+
+;; TODO this returns the last response again. Should handle the connection 
+;; termination correctly
+(defun eredis-shutdown()
+  (eredis-command-returning-status "shutdown"))
+
+(defun eredis-slaveof(host port)
+  (eredis-command-returning-status "slaveof" host port))
+
+;; This is in the docs but not in the server I'm using 
+;; (defun eredis-slowlog-len()
+;;   (eredis-command-returning-integer "slowlog" "len"))
+
+(defun eredis-sync()
+  (eredis-command-returning-status "sync"))
+
+;; Helpers 
 
 (defun eredis-mset-region(beg end delimiter) 
   "Parse the current region using DELIMITER to split each line into a key value pair which
