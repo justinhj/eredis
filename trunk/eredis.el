@@ -1,7 +1,7 @@
 ;; eredis... A simple emacs interface to redis
 ;; See for info on the protocol http://redis.io/topics/protocol
 
-;; (C)2011 Justin Heyes-Jones
+;; (C) 2011 Justin Heyes-Jones
 ;; This is released under the Gnu License v3. See http://www.gnu.org/licenses/gpl.txt
 
 (require 'org-table)
