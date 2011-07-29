@@ -4,7 +4,6 @@
 ;; (C)2011 Justin Heyes-Jones
 ;; This is released under the Gnu License v3. See http://www.gnu.org/licenses/gpl.txt
 
-;; I addded support for editing and viewing keys as an org-table
 (require 'org-table)
 
 (defvar *redis-process* nil "Current Redis client process")
@@ -196,8 +195,6 @@ length is -1 as per spec"
   (interactive)
   (eredis-delete-process))
 
-;; todo handle -blah error 
-
 (defun eredis-status-response-success-p(resp)
   (= ?+ (string-to-char resp)))
 
@@ -208,7 +205,11 @@ length is -1 as per spec"
 
 (defun eredis-parse-integer-response(resp)
   "parse integer response type"
-  (string-to-number (subseq resp 1)))
+  (if (= ?: (string-to-char resp))
+      (string-to-number (subseq resp 1))
+    (if (= ?- (string-to-char resp))
+	(error "redis error: %s" (eredis-trim-status-response resp))
+      nil)))
 
 (defun eredis-command-returning-integer(command &rest args)
   "Send a command that has the integer return type"
@@ -637,9 +638,62 @@ pattern. see the link for the style of patterns"
 
 ;; pub/sub commands
 
+;; Warning: these aren't working very well yet. Need to write a custom response handler 
+;; to handle replies from the publish subscribe commands. They have differences, for 
+;; example multiple bulk messages come at once. 
 
+(defun eredis-publish(channel message)
+  "eredis publish"
+  (eredis-command-returning-integer "publish" channel message))
 
+(defun eredis-subscribe(channel &rest channels)
+  "eredis subscribe"
+   (apply #'eredis-command-returning-multibulk "subscribe" channel channels))
 
+(defun eredis-psubscribe(pattern &rest patterns)
+  "eredis psubscribe"
+   (apply #'eredis-command-returning-multibulk "psubscribe" pattern patterns))
+
+(defun eredis-unsubscribe(channel &rest channels)
+  "eredis unsubscribe"
+   (apply #'eredis-command-returning-multibulk "unsubscribe" channel channels))
+
+(defun eredis-punsubscribe(pattern &rest patterns)
+  "eredis punsubscribe"
+   (apply #'eredis-command-returning-multibulk "punsubscribe" pattern patterns))
+
+(defun eredis-await-message()
+  "Not a redis command. After subscribe or psubscribe, call this  to poll each
+message and call unsubscribe or punsubscribe when done. Other commands will fail
+with an error until then"
+  (let ((resp (eredis-get-response)))
+    (eredis-parse-multi-bulk resp)))
+
+;; transaction commands
+
+(defun eredis-discard()
+  "eredis discard"
+  (eredis-command-returning-status "discard"))
+
+(defun eredis-multi()
+  "eredis multi"
+  (eredis-command-returning-status "multi"))
+
+;; TODO this returns a multibulk which in turn will contain a sequence of responses to commands
+;; executed. Best way to handle this is probably to return a list of responses
+;; Also need to fix the parser to handle numeric results in a multibulk response
+;; which is the same issue I'm seeing with publish/subscribe results
+(defun eredis-exec()
+  "eredis exec"
+  (eredis-command-returning-multibulk "exec"))
+
+(defun eredis-watch(key &rest keys)
+  "redis watch"
+  (apply #'eredis-command-returning-status "watch" key keys))
+
+(defun eredis-unwatch()
+  "redis unwatch"
+  (eredis-command-returning-status "unwatch"))
 
 ;; connection commands
 
