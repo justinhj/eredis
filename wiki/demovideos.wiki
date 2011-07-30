@@ -1,0 +1,13 @@
+=Demo videos=
+
+Connecting to a Redis server:
+
+<wiki:video url="http://www.youtube.com/watch?v=zh6F1UzWho0"/>
+
+Demo of pulling a pattern of keys to an org table:
+
+<wiki:video url="http://www.youtube.com/watch?v=ZP0MOaRueHU"/>
+
+More data types to org table and monitor mode
+
+<wiki:video url="http://www.youtube.com/watch?v=zm9obhWkTdE"/>
