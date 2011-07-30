@@ -25,6 +25,18 @@ commands like blpop which also have a timeout"
 	  (map 'list (lambda (a b) (cons a b)) lst1 lst2))
     retmap))
 
+(defun unflatten-map-worker(in keys values)
+  (if (null in)
+      (two-lists-to-map keys values)
+    (unflatten-map-worker (cddr in) (cons (first in) keys) (cons (second in) values))))
+
+(defun unflatten-map(l)
+  "take a list of value1 key1 ... valuen keyn and return a map"
+  (let ((len (length l)))
+    (if (/= (mod len 2) 0)
+	(error "list must be even length"))
+    (unflatten-map-worker l nil nil)))
+
 (defun flatten-map(m)
   "flatten the key values of map M to a list of the form key1 value1 key2 value2..."
   (let ((key-values nil))
@@ -49,6 +61,16 @@ commands like blpop which also have a timeout"
 (defun insert-map(m)
   "insert a map M of key value pairs into the current buffer"
   (maphash (lambda (a b) (insert (format "%s,%s\n" a b))) m))
+
+;; TODO random macro would be nice; dolist with a different body to execute for the first 
+;; or last item 
+(defun insert-list(l)
+  "insert a list L into the current buffer"
+  (let ((str ""))
+    (dolist (i l)
+      (setf str (concat str i ",")))
+    (let ((len (length str)))
+      (insert (subseq str 0 (1- len))))))
 
 (defun stringify-numbers-and-symbols(item)
   (cond 
@@ -846,6 +868,31 @@ is then sent to redis using mset"
 	(eredis-mset mset-param)
       nil)))
 
+(defun eredis-org-table-from-list(key)
+  "create an org table populated with the members of the list KEY"
+  (let ((items (eredis-lrange key 0 -1)))
+    (when items
+      (org-table-from-list items))))
+
+(defun eredis-org-table-from-zset(key &optional withscores)
+  "create an org table populated with the members of the zset KEY"
+  (let ((items (eredis-zrange key 0 -1 withscores)))
+    (when items
+      (org-table-from-list items))))
+
+(defun eredis-org-table-from-set(key)
+  "create an org table populated with the members of the set KEY"
+  (let ((members (eredis-smembers key)))
+    (when members
+      (org-table-from-list members))))
+
+(defun eredis-org-table-from-hash(key)
+  "org table populated with the hash of KEY"
+  (let ((m (eredis-hgetall key)))
+    (when m
+      (setf m (unflatten-map m))
+      (org-table-from-map m))))
+
 (defun eredis-org-table-from-pattern(pattern)
   "Search Redis for the pattern of keys and create an org table from the results"
   (interactive "sPattern: ")
@@ -853,6 +900,14 @@ is then sent to redis using mset"
     (if m
 	(org-table-from-map m)
       (message (format "No keys found for pattern %s" pattern)))))
+
+(defun org-table-from-list(l)
+  "Create an org-table from a list"
+  (let ((beg (point)))
+    (if (listp l)
+	(progn
+	  (insert-list l)
+	  (org-table-convert-region beg (point))))))
 
 (defun org-table-from-map(m)
   "Create an org-table from a map of key value pairs"
