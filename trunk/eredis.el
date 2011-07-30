@@ -9,7 +9,7 @@
 (defvar *redis-process* nil "Current Redis client process")
 (defvar *redis-state* nil "Statue of the connection")
 (defvar *redis-response* nil "Stores response of last Redis command")
-(defvar *redis-timeout* 15 "Timeout on the client in seconds when waiting for Redis")
+(defvar *redis-timeout* 300 "Timeout on the client in seconds when waiting for Redis")
 
 ;; UTILS
 
@@ -80,11 +80,12 @@ commands like blpop which also have a timeout"
 	  (two-lists-to-map keys values))
       nil)))
 
-(defun eredis-get-response()
+(defun eredis-get-response(&optional requested-timeout)
   "await response from redis and store it in *redis-response*. If it times out it will return nil"
-  (if (accept-process-output *redis-process* *redis-timeout* 0 t)
-      *redis-response*
-    nil))
+  (let ((timeout (or requested-timeout *redis-timeout*)))
+    (if (accept-process-output *redis-process* timeout 0 t)
+	*redis-response*
+      nil)))
 
 (defun eredis-parse-multi-bulk(resp)
   "parse the redis multi bulk response RESP and return the list of results. handles null entries when
@@ -144,10 +145,12 @@ length is -1 as per spec"
 	  (eredis-parse-bulk resp)))))
 
 (defun eredis-buffer-message(process message)
-  "print a message to the redis process buffer"
+  "append a message to the redis process buffer"
   (save-excursion 
     (set-buffer (process-buffer process))
-    (insert message)))
+    (goto-char (point-max))
+    (insert message)
+    (goto-char (point-max))))
 
 (defun eredis-sentinel(process event)
   "sentinel function for redis network process which monitors for events"
@@ -163,12 +166,15 @@ length is -1 as per spec"
 (defun eredis-delete-process()
   (when *redis-process*
     (delete-process *redis-process*)
+    (setq *redis-process* nil)
     (setq *redis-state* 'closed)))
 
 ;; Connect and disconnect functionality
 
 (defun eredis-hai(host port &optional no-wait)
-  (interactive "sHost: \nsPort: \n")
+  "connect to Redis on HOST PORT. NO-WAIT can be set to true to make the connection asynchronously
+but that's not supported on windows and doesn't make much difference"
+  (interactive "sHost: \nsPort (usually 6379): \n")
   (eredis-delete-process)
   (setq *redis-state* 'opening)
   (let ((p 
@@ -763,20 +769,44 @@ with an error until then"
 (defun eredis-lastsave()
   (eredis-command-returning-integer "lastsave"))
 
-;; TODO this needs a bit of work. This will get only the first command. Need to enter a loop 
-;; and let the user terminate monitor mode. Also should handle repeated status type 
-;; responses until monitor is done. Dumping to a buffer may make sense here
-;; and with the subcribe/publish stuff
+;; TODO monitor opens up the *redis-buffer* and shows commands streaming 
+;; but it does not yet follow along, they just go off the screen, so I need
+;; to fix that
 (defun eredis-monitor()
-  (eredis-command-returning-status "monitor"))
+  (if (and *redis-process* (eq *redis-state* 'open))
+      (unwind-protect
+	  (progn
+	    (switch-to-buffer "*redis*")
+	    (goto-char (point-max))
+	    (eredis-buffer-message *redis-process* "C-g to exit\n")
+	    (process-send-string *redis-process* "monitor\r\n")
+	    (let ((resp nil))
+	      (while t
+		(redisplay t)
+		(sleep-for 1)
+		;;(recenter-top-bottom 'top)
+		(let ((resp (eredis-get-response 5)))
+		  (when resp
+		    (eredis-buffer-message *redis-process* resp))))))
+	;; when the user hits C-g we send the quit command to exit
+	;; monitor mode
+	(progn
+	  (eredis-quit)
+	  (eredis-kthxbye)))))
+	
 
 (defun eredis-save()
   (eredis-command-returning-status "save"))
 
-;; TODO this returns the last response again. Should handle the connection 
-;; termination correctly
 (defun eredis-shutdown()
-  (eredis-command-returning-status "shutdown"))
+  "shutdown redis server"
+  (interactive)
+  ;; Note that this just sends the command and does not wait for or parse the response
+  ;; since there shouldn't be one
+  (if (and *redis-process* (eq *redis-state* 'open))
+      (progn 
+	(process-send-string *redis-process* (eredis-construct-unified-request "shutdown"))
+	(eredis-kthxbye))))
 
 (defun eredis-slaveof(host port)
   (eredis-command-returning-status "slaveof" host port))
