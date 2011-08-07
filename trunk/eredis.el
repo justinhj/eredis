@@ -5,6 +5,7 @@
 ;; This is released under the Gnu License v3. See http://www.gnu.org/licenses/gpl.txt
 
 (require 'org-table)
+(require 'cl)
 
 (defvar *redis-process* nil "Current Redis client process")
 (defvar *redis-state* nil "Statue of the connection")
@@ -19,7 +20,8 @@ commands like blpop which also have a timeout"
   (setf *redis-timeout* seconds))
 
 (defun two-lists-to-map(lst1 lst2)
-  "take a list of keys LST1 and a list of values LST2 and make a hashmap"
+  "take a list of keys LST1 and a list of values LST2 and make a hashmap, not particularly efficient
+as it first constructs a list of key value pairs then uses that to construct the hashmap"
   (let ((retmap (make-hash-table :test 'equal)))
     (mapc (lambda (n) (puthash (car n) (cdr n) retmap))
 	  (map 'list (lambda (a b) (cons a b)) lst1 lst2))
@@ -66,11 +68,9 @@ commands like blpop which also have a timeout"
 ;; or last item 
 (defun insert-list(l)
   "insert a list L into the current buffer"
-  (let ((str ""))
-    (dolist (i l)
-      (setf str (concat str i ",")))
-    (let ((len (length str)))
-      (insert (subseq str 0 (1- len))))))
+  (let ((str (mapconcat #'identity l ",")))
+    (insert str)))
+;    (insert (subseq str 0 ))))
 
 (defun stringify-numbers-and-symbols(item)
   (cond 
@@ -139,7 +139,8 @@ length is -1 as per spec"
       (progn 
 	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
 	(let ((resp (eredis-get-response)))
-	  (eredis-parse-multi-bulk resp)))))
+	  (eredis-parse-multi-bulk resp)))
+    (error "redis not connected")))
 
 (defun eredis-parse-bulk(resp)
   "parse the redis bulk response RESP and return the result"
@@ -164,7 +165,8 @@ length is -1 as per spec"
       (progn 
 	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
 	(let ((resp (eredis-get-response)))
-	  (eredis-parse-bulk resp)))))
+	  (eredis-parse-bulk resp)))
+    (error "redis not connected")))
 
 (defun eredis-buffer-message(process message)
   "append a message to the redis process buffer"
@@ -179,7 +181,13 @@ length is -1 as per spec"
   (eredis-buffer-message process (format "sentinel event %s" event))
   (cond 
    ((string-match "open" event)
-    (setq *redis-state* 'open))))
+    (setq *redis-state* 'open))
+   ((string-match "connection broken by remote peer" event)
+    (progn 
+      (setq *redis-state* 'closed)
+      (setq *redis-process* nil)))
+   (t
+    nil)))
 
 (defun eredis-filter(process string)
   "filter function for redis network process, which receives output"
@@ -203,6 +211,7 @@ but that's not supported on windows and doesn't make much difference"
 	 (make-network-process :name "redis"
 			       :host host
 			       :service port
+			       :type nil
 			       :nowait no-wait
 			       :filter #'eredis-filter
 			       :keepalive t
@@ -249,7 +258,7 @@ but that's not supported on windows and doesn't make much difference"
 	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
 	(let ((resp (eredis-get-response)))
 	  (eredis-parse-integer-response resp)))
-    nil))
+    (error "redis not connected")))
 
 (defun eredis-command-returning-status(command &rest args)
   "Send a command that has the status code return type"
@@ -264,7 +273,7 @@ but that's not supported on windows and doesn't make much difference"
 		    (message ret-val))
 		  ret-val)
 	      (error "redis error: %s" ret-val)))))
-    nil))
+    (error "redis not connected")))
 
 (defun eredis-get-map(keys)
   "given a map M of key/value pairs, go to Redis to retrieve the values and set the 
@@ -868,23 +877,45 @@ is then sent to redis using mset"
 	(eredis-mset mset-param)
       nil)))
 
+(defun eredis-org-table-from-keys(keys)
+  "for each of KEYS lookup their type in redis and populate an org table 
+containing a row for each one"
+  (org-table-from-list  '("Key" "Type" "Values"))
+  (dolist (key keys)
+    (let ((type (eredis-type key)))	 
+      (cond
+       ((string= "string" type)
+	(eredis-org-table-from-string key))
+       ((string= "zset" type)
+	(eredis-org-table-from-zset key 'withscores))
+       ((string= "hash" type)
+	(eredis-org-table-from-hash key))
+       ((string= "list" type)
+	(eredis-org-table-from-list key))
+       ((string= "set" type)
+	(eredis-org-table-from-set key))
+       ((string= "none" type)
+	nil) ; silently skip missing keys
+       (t
+	(insert (format "| %s | unknown type %s |\n" key type)))))))
+
 (defun eredis-org-table-from-list(key)
   "create an org table populated with the members of the list KEY"
   (let ((items (eredis-lrange key 0 -1)))
     (when items
-      (org-table-from-list items))))
+      (org-table-from-list (apply #' list key "list" items)))))
 
 (defun eredis-org-table-from-zset(key &optional withscores)
   "create an org table populated with the members of the zset KEY"
   (let ((items (eredis-zrange key 0 -1 withscores)))
     (when items
-      (org-table-from-list items))))
+      (org-table-from-list (apply #'list key "zset" items)))))
 
 (defun eredis-org-table-from-set(key)
   "create an org table populated with the members of the set KEY"
   (let ((members (eredis-smembers key)))
     (when members
-      (org-table-from-list members))))
+      (org-table-from-list (apply #'list key "set" members)))))
 
 (defun eredis-org-table-from-hash(key)
   "org table populated with the hash of KEY"
@@ -893,21 +924,25 @@ is then sent to redis using mset"
       (setf m (unflatten-map m))
       (org-table-from-map m))))
 
+(defun eredis-org-table-from-string(key)
+  "create a small org table from the key, and it's string value"
+  (let ((val (eredis-get key)))
+    (when val
+      (org-table-from-list (list key "string" val)))))
+
 (defun eredis-org-table-from-pattern(pattern)
   "Search Redis for the pattern of keys and create an org table from the results"
-  (interactive "sPattern: ")
-  (let ((m (eredis-map-keys pattern)))
-    (if m
-	(org-table-from-map m)
-      (message (format "No keys found for pattern %s" pattern)))))
+  (let ((keys (eredis-keys pattern)))
+    (if keys
+	(eredis-org-table-from-keys keys))))
 
 (defun org-table-from-list(l)
   "Create an org-table from a list"
-  (let ((beg (point)))
-    (if (listp l)
-	(progn
-	  (insert-list l)
-	  (org-table-convert-region beg (point))))))
+  (if (listp l)
+      (let ((beg (point)))
+    	(insert-list l)
+    	(org-table-convert-region beg (point) '(4))
+    	(forward-line))))
 
 (defun org-table-from-map(m)
   "Create an org-table from a map of key value pairs"
