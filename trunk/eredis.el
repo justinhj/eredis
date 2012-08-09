@@ -1,8 +1,24 @@
-;; eredis... A simple emacs interface to redis
-;; See for info on the protocol http://redis.io/topics/protocol
+;;; eredis.el --- eredis, a Redis client in emacs lisp
+;; Copyright 2012 Justin Heyes-Jones
+ 
+;; Author: Justin Heyes-Jones
+;; URL: http://code.google.com/p/eredis/
+;; Version: 0.5.00
+;; Package-Requires: 
 
-;; (C) 2011 Justin Heyes-Jones
+;; See for info on the protocol http://redis.io/topics/protocol
 ;; This is released under the Gnu License v3. See http://www.gnu.org/licenses/gpl.txt
+
+;; Usage: 
+;; (eredis-connect "localhost" "6379")
+;; ...
+;; (eredis-set "key" "value") "ok"
+;; (eredis-get "key") "value"
+;; ...
+;; (eredis-disconnect)
+
+;; wiki http://code.google.com/p/eredis/wiki/wiki 
+;; videos http://code.google.com/p/eredis/wiki/demovideos
 
 (require 'org-table)
 (require 'cl)
@@ -201,7 +217,7 @@ length is -1 as per spec"
 
 ;; Connect and disconnect functionality
 
-(defun eredis-hai(host port &optional no-wait)
+(defun eredis-connect(host port &optional no-wait)
   "connect to Redis on HOST PORT. NO-WAIT can be set to true to make the connection asynchronously
 but that's not supported on windows and doesn't make much difference"
   (interactive "sHost: \nsPort (usually 6379): \n")
@@ -229,11 +245,15 @@ but that's not supported on windows and doesn't make much difference"
 		  (message "Redis connected"))
 		(setf *redis-state* 'open)))
 	  (setf *redis-process* p)))))
+
+(defalias 'eredis-hai 'eredis-connect)
      
-(defun eredis-kthxbye()
+(defun eredis-disconnect()
   "Close the connection to Redis"
   (interactive)
   (eredis-delete-process))
+
+(defalias 'eredis-kthxbye 'eredis-disconnect)
 
 (defun eredis-status-response-success-p(resp)
   (= ?+ (string-to-char resp)))
@@ -1009,3 +1029,5 @@ column to a value, returning the result as a dotted pair"
     (eredis-set (car keyvalue) (cdr keyvalue))))
 
 (provide 'eredis)
+
+;;; eredis.el ends here
