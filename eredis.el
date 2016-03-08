@@ -7,71 +7,65 @@
 (require 'org-table)
 (require 'cl-lib)
 
-(defvar *redis-process* nil "Current Redis client process")
-(defvar *redis-response* nil "Stores response of last Redis command")
-(defvar *redis-timeout* 300 "Timeout on the client in seconds when waiting for Redis")
+(defvar eredis-process nil "Current Redis client process")
+(defvar eredis-response nil "Stores response of last Redis command")
 
 ;; UTILS
 
-(defun eredis-set-timeout(seconds)
+(defun eredis-set-timeout(redis-process seconds)
   "set how long emacs will wait for a response from redit, pay attention to this if using blocking 
 commands like blpop which also have a timeout" 
-  (setf *redis-timeout* seconds))
+  (process-put redis-process 'eredis-timeout seconds))
 
-(defun two-lists-to-map(lst1 lst2)
+(defun eredis--two-lists-to-map(key-list value-list)
   "take a list of keys LST1 and a list of values LST2 and make a hashmap, not particularly efficient
 as it first constructs a list of key value pairs then uses that to construct the hashmap"
   (let ((retmap (make-hash-table :test 'equal)))
-    (mapc (lambda (n) (puthash (car n) (cdr n) retmap))
-	  (map 'list (lambda (a b) (cons a b)) lst1 lst2))
+    (cl-mapc (lambda (k v)
+               (puthash k v retmap))
+             key-list value-list)
     retmap))
 
-(defun unflatten-map-worker(in keys values)
+(defun eredis--unflatten-map-worker(in keys values)
   (if (null in)
-      (two-lists-to-map keys values)
-    (unflatten-map-worker (cddr in) (cons (first in) keys) (cons (second in) values))))
+      (eredis--two-lists-to-map keys values)
+    (eredis--unflatten-map-worker (cddr in) (cons (first in) keys) (cons (second in) values))))
 
-(defun unflatten-map(l)
+(defun eredis--unflatten-map(l)
   "take a list of value1 key1 ... valuen keyn and return a map"
   (let ((len (length l)))
     (if (/= (mod len 2) 0)
-	(error "list must be even length"))
-    (unflatten-map-worker l nil nil)))
+        (error "list must be even length"))
+    (eredis--unflatten-map-worker l nil nil)))
 
-(defun flatten-map(m)
+(defun eredis--flatten-map(m)
   "flatten the key values of map M to a list of the form key1 value1 key2 value2..."
   (let ((key-values nil))
     (maphash (lambda (k v)
-	       (push k key-values)
-	       (push v key-values))
-	     m)
+               (push k key-values)
+               (push v key-values))
+             m)
     (reverse key-values)))
 
 (defun eredis-parse-map-or-list-arg(a)
   "handle when an argument can be passed as a hash table or a list of key values"
   (if (hash-table-p a)
-      (flatten-map a)
+      (eredis--flatten-map a)
     a))
 
-;; helper function from http://www.emacswiki.org/emacs/ElispCookbook#toc5
-(defun chomp (str)
-  "Remove leading and tailing whitespace from STR."
-  (let ((s (if (symbolp str) (symbol-name str) str)))
-    (replace-regexp-in-string "\\(^[[:space:]\n]*\\|[[:space:]\n]*$\\)" "" s)))
-
-(defun insert-map(m)
+(defun eredis--insert-map(m)
   "insert a map M of key value pairs into the current buffer"
   (maphash (lambda (a b) (insert (format "%s,%s\n" a b))) m))
 
 ;; TODO random macro would be nice; dolist with a different body to execute for the first 
 ;; or last item 
-(defun insert-list(l)
+(defun eredis--insert-list(l)
   "insert a list L into the current buffer"
   (let ((str (mapconcat #'identity l ",")))
     (insert str)))
-;    (insert (cl-subseq str 0 ))))
+                                        ;    (insert (cl-subseq str 0 ))))
 
-(defun stringify-numbers-and-symbols(item)
+(defun eredis--stringify-numbers-and-symbols(item)
   (cond 
    ((numberp item)
     (number-to-string item))
@@ -86,26 +80,28 @@ as it first constructs a list of key value pairs then uses that to construct the
   "all redis commands are sent using this protocol"
   (let ((num-args (+ 1 (length arguments))))
     (if (> num-args 0)
-	(let ((req (format "*%d\r\n$%d\r\n%s\r\n" num-args (length command) command)))
-	  (dolist (item arguments)
-	    (setf item (stringify-numbers-and-symbols item))
-	    (setf req (concat req (format "$%d\r\n%s\r\n" (length item) item))))
-	  req)
+        (let ((req (format "*%d\r\n$%d\r\n%s\r\n" num-args (length command) command)))
+          (dolist (item arguments)
+            (setf item (eredis--stringify-numbers-and-symbols item))
+            (setf req (concat req (format "$%d\r\n%s\r\n" (length item) item))))
+          req)
       nil)))
 
 (defun eredis-map-keys(key-expr)
   "take a glob expression like \"user.id.*\" and return the key/values of matching keys"
   (let ((keys (eredis-keys key-expr)))
     (if keys
-	(let ((values (eredis-mget keys)))
-	  (two-lists-to-map keys values))
+        (let ((values (eredis-mget keys)))
+          (eredis--two-lists-to-map keys values))
       nil)))
 
 (defun eredis-get-response(&optional requested-timeout)
-  "await response from redis and store it in *redis-response*. If it times out it will return nil"
-  (let ((timeout (or requested-timeout *redis-timeout*)))
-    (if (accept-process-output *redis-process* timeout 0 t)
-	*redis-response*
+  "await response from redis and store it in eredis-response. If it times out it will return nil"
+  (let ((timeout (or requested-timeout
+                     (process-get eredis-process 'eredis-timeout)
+                     300)))
+    (if (accept-process-output eredis-process timeout 0 t)
+        eredis-response
       nil)))
 
 (defun eredis-parse-multi-bulk(resp)
@@ -114,31 +110,31 @@ length is -1 as per spec"
   (if (null resp) ;; resp is nil if timeout or other problem
       nil
     (if (= ?- (string-to-char resp))
-	(error "redis error: %s" (eredis-trim-status-response resp))
+        (error "redis error: %s" (eredis-trim-status-response resp))
       (let ((num-values (string-to-number (cl-subseq resp 1))))
-	(if (<= num-values 0)
-	    nil
-	  (let ((return-list nil)
-		(parse-pos (string-match "^\\$" resp)))
-	    (dotimes (n num-values)
-	      (let ((len (string-to-number (cl-subseq resp (1+ parse-pos)))))
-		(string-match "\r\n" resp parse-pos)
-		(setf parse-pos (match-end 0))
-		(if (= len -1)
-		    (setf return-list (cons nil return-list))
-		  (unless (and parse-pos (> parse-pos 0))
-		    (error "parse error"))
-		  (setf return-list (cons (cl-subseq resp parse-pos (+ len parse-pos)) return-list)))
-		(setf parse-pos (string-match "^\\$" resp parse-pos))))
-	    (reverse return-list)))))))
+        (if (<= num-values 0)
+            nil
+          (let ((return-list nil)
+                (parse-pos (string-match "^\\$" resp)))
+            (dotimes (n num-values)
+              (let ((len (string-to-number (cl-subseq resp (1+ parse-pos)))))
+                (string-match "\r\n" resp parse-pos)
+                (setf parse-pos (match-end 0))
+                (if (= len -1)
+                    (setf return-list (cons nil return-list))
+                  (unless (and parse-pos (> parse-pos 0))
+                    (error "parse error"))
+                  (setf return-list (cons (cl-subseq resp parse-pos (+ len parse-pos)) return-list)))
+                (setf parse-pos (string-match "^\\$" resp parse-pos))))
+            (reverse return-list)))))))
 
 (defun eredis-command-returning-multibulk(command &rest args)
   "Send a COMMAND that has the multi bulk return type and return a list to the user"
-  (if (and *redis-process* (eq (process-status *redis-process*) 'open))
+  (if (and eredis-process (eq (process-status eredis-process) 'open))
       (progn 
-	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
-	(let ((resp (eredis-get-response)))
-	  (eredis-parse-multi-bulk resp)))
+        (process-send-string eredis-process (apply #'eredis-construct-unified-request command args))
+        (let ((resp (eredis-get-response)))
+          (eredis-parse-multi-bulk resp)))
     (error "redis not connected")))
 
 (defun eredis-parse-bulk(resp)
@@ -146,25 +142,25 @@ length is -1 as per spec"
   (if (null resp)
       nil
     (if (= ?$ (string-to-char resp))
-	(let ((count (string-to-number (cl-subseq resp 1))))
-	  (if (and (> count 0)
-		   (string-match "\r\n" resp))
-	      (let ((body-start (match-end 0)))
-		(when body-start
-		  (cl-subseq resp body-start (+ count body-start))))
-	    nil))
+        (let ((count (string-to-number (cl-subseq resp 1))))
+          (if (and (> count 0)
+                   (string-match "\r\n" resp))
+              (let ((body-start (match-end 0)))
+                (when body-start
+                  (cl-subseq resp body-start (+ count body-start))))
+            nil))
       (if (= ?- (string-to-char resp))
-	  (error "redis error: %s" (eredis-trim-status-response resp))
-	nil))))
-      
+          (error "redis error: %s" (eredis-trim-status-response resp))
+        nil))))
+
 
 (defun eredis-command-returning-bulk(command &rest args)
   "Send a COMMAND that has the bulk return type and return it to the user"
-  (if (and *redis-process* (eq (process-status *redis-process*) 'open))
+  (if (and eredis-process (eq (process-status eredis-process) 'open))
       (progn 
-	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
-	(let ((resp (eredis-get-response)))
-	  (eredis-parse-bulk resp)))
+        (process-send-string eredis-process (apply #'eredis-construct-unified-request command args))
+        (let ((resp (eredis-get-response)))
+          (eredis-parse-bulk resp)))
     (error "redis not connected")))
 
 (defun eredis-buffer-message(process message)
@@ -177,47 +173,38 @@ length is -1 as per spec"
 (defun eredis-sentinel(process event)
   "sentinel function for redis network process which monitors for events"
   (eredis-buffer-message process (format "sentinel event %s" event))
-  (when (process-status process)
+  (when (eq 'closed (process-status process))
     (delete-process process)
-    (setq *redis-process* nil)))
+    (setq eredis-process nil)))
 
 (defun eredis-filter(process string)
   "filter function for redis network process, which receives output"
-  (setq *redis-response* string))
+  (setq eredis-response string))
 
 (defun eredis-delete-process()
-  (when *redis-process*
-    (delete-process *redis-process*)
-    (setq *redis-process* nil)))
+  (when eredis-process
+    (delete-process eredis-process)
+    (setq eredis-process nil)))
 
 ;; Connect and disconnect functionality
 
 (defun eredis-hai(host port &optional no-wait)
   "connect to Redis on HOST PORT. NO-WAIT can be set to true to make the connection asynchronously
 but that's not supported on windows and doesn't make much difference"
-  (interactive "sHost: \nsPort (usually 6379): \n")
+  (interactive (list (read-string "Host: ") (read-number "Port: " 6379)))
   (eredis-delete-process)
-  (let ((p 
-	 (make-network-process :name "redis"
-			       :host host
-			       :service port
-			       :type nil
-			       :nowait no-wait
-			       :filter #'eredis-filter
-			       :keepalive t
-			       :linger t
-			       :sentinel #'eredis-sentinel
-			       :buffer (get-buffer-create "*redis*"))))
-    (if p
-	(progn
-	  ;; When doing a blocking connect set the state to
-	  ;; open. A non-nlocking connect will set the state 
-	  ;; to open when the connection calls the sentinel
-      (if (null no-wait)
-          (when (called-interactively-p 'any)
-            (message "Redis connected")))
-	  (setf *redis-process* p)))))
-     
+  (setq eredis-process
+        (make-network-process :name "redis"
+                              :host host
+                              :service port
+                              :type nil
+                              :nowait no-wait
+                              :filter #'eredis-filter
+                              :keepalive t
+                              :linger t
+                              :sentinel #'eredis-sentinel
+                              :buffer (get-buffer-create "*redis*"))))
+
 (defun eredis-kthxbye()
   "Close the connection to Redis"
   (interactive)
@@ -236,31 +223,31 @@ but that's not supported on windows and doesn't make much difference"
   (if (= ?: (string-to-char resp))
       (string-to-number (cl-subseq resp 1))
     (if (= ?- (string-to-char resp))
-	(error "redis error: %s" (eredis-trim-status-response resp))
+        (error "redis error: %s" (eredis-trim-status-response resp))
       nil)))
 
 (defun eredis-command-returning-integer(command &rest args)
   "Send a command that has the integer return type"
-  (if (and *redis-process* (eq (process-status *redis-process*) 'open))
+  (if (and eredis-process (eq (process-status eredis-process) 'open))
       (progn 
-	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
-	(let ((resp (eredis-get-response)))
-	  (eredis-parse-integer-response resp)))
+        (process-send-string eredis-process (apply #'eredis-construct-unified-request command args))
+        (let ((resp (eredis-get-response)))
+          (eredis-parse-integer-response resp)))
     (error "redis not connected")))
 
 (defun eredis-command-returning-status(command &rest args)
   "Send a command that has the status code return type"
-  (if (and *redis-process* (eq (process-status *redis-process*) 'open))
+  (if (and eredis-process (eq (process-status eredis-process) 'open))
       (progn 
-	(process-send-string *redis-process* (apply #'eredis-construct-unified-request command args))
-	(let ((resp (eredis-get-response)))
-	  (let ((ret-val (eredis-trim-status-response resp)))
-	    (if (eredis-status-response-success-p resp)
-		(progn
-		  (when (called-interactively-p 'any)
-		    (message ret-val))
-		  ret-val)
-	      (error "redis error: %s" ret-val)))))
+        (process-send-string eredis-process (apply #'eredis-construct-unified-request command args))
+        (let ((resp (eredis-get-response)))
+          (let ((ret-val (eredis-trim-status-response resp)))
+            (if (eredis-status-response-success-p resp)
+                (progn
+                  (when (called-interactively-p 'any)
+                    (message ret-val))
+                  ret-val)
+              (error "redis error: %s" ret-val)))))
     (error "redis not connected")))
 
 (defun eredis-get-map(keys)
@@ -272,7 +259,7 @@ but that's not supported on windows and doesn't make much difference"
     (maphash (lambda (k v)
                (setf key-value-string (concat key-value-string (format "$%d\r\n%s\r\n" (length k) k))))
              m)
-    (process-send-string *redis-process* (concat command key-value-string))
+    (process-send-string eredis-process (concat command key-value-string))
     (eredis-get-response)))
 
 ;; key commands 
@@ -792,13 +779,13 @@ with an error until then"
 ;; but it does not yet follow along, they just go off the screen, so I need
 ;; to fix that
 (defun eredis-monitor()
-  (if (and *redis-process* (eq (process-status *redis-process*) 'open))
+  (if (and eredis-process (eq (process-status eredis-process) 'open))
       (unwind-protect
           (progn
             (switch-to-buffer "*redis*")
             (goto-char (point-max))
-            (eredis-buffer-message *redis-process* "C-g to exit\n")
-            (process-send-string *redis-process* "monitor\r\n")
+            (eredis-buffer-message eredis-process "C-g to exit\n")
+            (process-send-string eredis-process "monitor\r\n")
             (let ((resp nil))
               (while t
                 (redisplay t)
@@ -806,7 +793,7 @@ with an error until then"
                 ;;(recenter-top-bottom 'top)
                 (let ((resp (eredis-get-response 5)))
                   (when resp
-                    (eredis-buffer-message *redis-process* resp))))))
+                    (eredis-buffer-message eredis-process resp))))))
         ;; when the user hits C-g we send the quit command to exit
         ;; monitor mode
         (progn
@@ -822,9 +809,9 @@ with an error until then"
   (interactive)
   ;; Note that this just sends the command and does not wait for or parse the response
   ;; since there shouldn't be one
-  (if (and *redis-process* (eq (process-status *redis-process*) 'open))
+  (if (and eredis-process (eq (process-status eredis-process) 'open))
       (progn 
-        (process-send-string *redis-process* (eredis-construct-unified-request "shutdown"))
+        (process-send-string eredis-process (eredis-construct-unified-request "shutdown"))
         (eredis-kthxbye))))
 
 (defun eredis-slaveof(host port)
@@ -868,7 +855,7 @@ is then sent to redis using mset"
 (defun eredis-org-table-from-keys(keys)
   "for each of KEYS lookup their type in redis and populate an org table 
 containing a row for each one"
-  (org-table-from-list  '("Key" "Type" "Values"))
+  (eredis--org-table-from-list  '("Key" "Type" "Values"))
   (dolist (key keys)
     (let ((type (eredis-type key)))	 
       (cond
@@ -891,32 +878,32 @@ containing a row for each one"
   "create an org table populated with the members of the list KEY"
   (let ((items (eredis-lrange key 0 -1)))
     (when items
-      (org-table-from-list (apply #' list key "list" items)))))
+      (eredis--org-table-from-list (apply #' list key "list" items)))))
 
 (defun eredis-org-table-from-zset(key &optional withscores)
   "create an org table populated with the members of the zset KEY"
   (let ((items (eredis-zrange key 0 -1 withscores)))
     (when items
-      (org-table-from-list (apply #'list key "zset" items)))))
+      (eredis--org-table-from-list (apply #'list key "zset" items)))))
 
 (defun eredis-org-table-from-set(key)
   "create an org table populated with the members of the set KEY"
   (let ((members (eredis-smembers key)))
     (when members
-      (org-table-from-list (apply #'list key "set" members)))))
+      (eredis--org-table-from-list (apply #'list key "set" members)))))
 
 (defun eredis-org-table-from-hash(key)
   "org table populated with the hash of KEY"
   (let ((m (eredis-hgetall key)))
     (when m
-      (setf m (unflatten-map m))
-      (org-table-from-map m))))
+      (setf m (eredis--unflatten-map m))
+      (eredis--org-table-from-map m))))
 
 (defun eredis-org-table-from-string(key)
   "create a small org table from the key, and it's string value"
   (let ((val (eredis-get key)))
     (when val
-      (org-table-from-list (list key "string" val)))))
+      (eredis--org-table-from-list (list key "string" val)))))
 
 (defun eredis-org-table-from-pattern(pattern)
   "Search Redis for the pattern of keys and create an org table from the results"
@@ -924,27 +911,27 @@ containing a row for each one"
     (if keys
         (eredis-org-table-from-keys keys))))
 
-(defun org-table-from-list(l)
+(defun eredis--org-table-from-list(l)
   "Create an org-table from a list"
   (if (listp l)
       (let ((beg (point)))
-        (insert-list l)
+        (eredis--insert-list l)
         (org-table-convert-region beg (point) '(4))
         (forward-line))))
 
-(defun org-table-from-map(m)
+(defun eredis--org-table-from-map(m)
   "Create an org-table from a map of key value pairs"
   (let ((beg (point)))
     (if (hash-table-p m)
         (progn
-          (insert-map m)
+          (eredis--insert-map m)
           (org-table-convert-region beg (point))))))
 
 (defun eredis-org-table-get-field-clean(col)
   "Get a field in org table at column COL and strip any leading or
-trailing whitespace using chomp. Also strip text properties"
+trailing whitespace using `string-trim'. Also strip text properties"
   (let ((field (org-table-get-field col)))
-    (let ((chomped (chomp field)))
+    (let ((chomped (string-trim field)))
       (set-text-properties 0 (length chomped) nil chomped)
       chomped)))
 
