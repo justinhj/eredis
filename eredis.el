@@ -104,63 +104,90 @@ as it first constructs a list of key value pairs then uses that to construct the
         eredis-response
       nil)))
 
-(defun eredis-parse-multi-bulk(resp)
+(defun eredis-response-type-of (response)
+  (let ((chr (elt response 0))
+        (chr-type-alist '((?- . error)
+                          (?* . multi-bulk)
+                          (?$ . single-bulk)
+                          (?: . integer)
+                          (?+ . status))))
+    (cdr (assoc chr chr-type-alist))))
+
+(defun eredis-parse-response (response)
+  (message "%s" resp)
+  (let ((response-type (eredis-response-type-of response)))
+    (cond ((eq response-type 'error)
+           (eredis-parse-error-response response))
+          ((eq response-type 'multi-bulk)
+           (eredis-parse-multi-bulk-response response))
+          ((eq response-type 'single-bulk)
+           (eredis-parse-bulk-response response))
+          ((eq response-type 'integer)
+           (eredis-parse-integer-response response))
+          ((eq response-type 'status)
+           (eredis-parse-status-response response))
+          (t (error "unkown response-type:%s" response)))))
+
+(defun eredis-trim-status-response(resp)
+  "strip the leading character +/- and the final carriage returns"
+  (let ((len (length resp)))
+    (cl-subseq resp 1 (- len 2))))
+
+(defun eredis-parse-integer-response(resp)
+  "parse integer response type"
+  (when resp
+    (string-to-number (cl-subseq resp 1))))
+
+(defun eredis-parse-error-response (response)
+  (when response
+    (error "redis error: %s" (eredis-trim-status-response response))))
+
+(defun eredis-parse-status-response (response)
+  (when response
+    (eredis-trim-status-response response)))
+
+(defun eredis-parse-multi-bulk-response (resp)
   "parse the redis multi bulk response RESP and return the list of results. handles null entries when
 length is -1 as per spec"
-  (if (null resp) ;; resp is nil if timeout or other problem
-      nil
-    (if (= ?- (string-to-char resp))
-        (error "redis error: %s" (eredis-trim-status-response resp))
-      (let ((num-values (string-to-number (cl-subseq resp 1))))
-        (if (<= num-values 0)
-            nil
-          (let ((return-list nil)
-                (parse-pos (string-match "^\\$" resp)))
-            (dotimes (n num-values)
-              (let ((len (string-to-number (cl-subseq resp (1+ parse-pos)))))
-                (string-match "\r\n" resp parse-pos)
-                (setf parse-pos (match-end 0))
-                (if (= len -1)
-                    (setf return-list (cons nil return-list))
-                  (unless (and parse-pos (> parse-pos 0))
-                    (error "parse error"))
-                  (setf return-list (cons (cl-subseq resp parse-pos (+ len parse-pos)) return-list)))
-                (setf parse-pos (string-match "^\\$" resp parse-pos))))
-            (reverse return-list)))))))
+  (when resp
+    (let ((num-values (string-to-number (cl-subseq resp 1))))
+      (if (<= num-values 0)
+          nil
+        (let ((return-list nil)
+              (parse-pos (string-match "^\\$" resp)))
+          (dotimes (n num-values)
+            (let ((len (string-to-number (cl-subseq resp (1+ parse-pos)))))
+              (string-match "\r\n" resp parse-pos)
+              (setf parse-pos (match-end 0))
+              (if (= len -1)
+                  (setf return-list (cons nil return-list))
+                (unless (and parse-pos (> parse-pos 0))
+                  (error "parse error"))
+                (setf return-list (cons (cl-subseq resp parse-pos (+ len parse-pos)) return-list)))
+              (setf parse-pos (string-match "^\\$" resp parse-pos))))
+          (reverse return-list))))))
 
-(defun eredis-command-returning-multibulk(command &rest args)
-  "Send a COMMAND that has the multi bulk return type and return a list to the user"
-  (if (and eredis-process (eq (process-status eredis-process) 'open))
-      (progn 
-        (process-send-string eredis-process (apply #'eredis-construct-unified-request command args))
-        (let ((resp (eredis-get-response)))
-          (eredis-parse-multi-bulk resp)))
-    (error "redis not connected")))
-
-(defun eredis-parse-bulk(resp)
+(defun eredis-parse-bulk-response (resp)
   "parse the redis bulk response RESP and return the result"
-  (if (null resp)
-      nil
-    (if (= ?$ (string-to-char resp))
-        (let ((count (string-to-number (cl-subseq resp 1))))
-          (if (and (> count 0)
-                   (string-match "\r\n" resp))
-              (let ((body-start (match-end 0)))
-                (when body-start
-                  (cl-subseq resp body-start (+ count body-start))))
-            nil))
-      (if (= ?- (string-to-char resp))
-          (error "redis error: %s" (eredis-trim-status-response resp))
+  (when resp
+    (let ((count (string-to-number (cl-subseq resp 1))))
+      (if (and (> count 0)
+               (string-match "\r\n" resp))
+          (let ((body-start (match-end 0)))
+            (when body-start
+              (cl-subseq resp body-start (+ count body-start))))
         nil))))
 
-
-(defun eredis-command-returning-bulk(command &rest args)
-  "Send a COMMAND that has the bulk return type and return it to the user"
+(defun eredis-command-returning (command &rest args)
+  "Send a command that has the status code return type"
   (if (and eredis-process (eq (process-status eredis-process) 'open))
       (progn 
         (process-send-string eredis-process (apply #'eredis-construct-unified-request command args))
-        (let ((resp (eredis-get-response)))
-          (eredis-parse-bulk resp)))
+        (let* ((resp (eredis-get-response))
+               (ret-val (eredis-parse-response resp)))
+          (when (called-interactively-p 'any)
+            (message ret-val))
+          ret-val))
     (error "redis not connected")))
 
 (defun eredis-buffer-message(process message)
@@ -210,46 +237,6 @@ but that's not supported on windows and doesn't make much difference"
   (interactive)
   (eredis-delete-process))
 
-(defun eredis-status-response-success-p(resp)
-  (= ?+ (string-to-char resp)))
-
-(defun eredis-trim-status-response(resp)
-  "strip the leading character +/- and the final carriage returns"
-  (let ((len (length resp)))
-    (cl-subseq resp 1 (- len 2))))
-
-(defun eredis-parse-integer-response(resp)
-  "parse integer response type"
-  (if (= ?: (string-to-char resp))
-      (string-to-number (cl-subseq resp 1))
-    (if (= ?- (string-to-char resp))
-        (error "redis error: %s" (eredis-trim-status-response resp))
-      nil)))
-
-(defun eredis-command-returning-integer(command &rest args)
-  "Send a command that has the integer return type"
-  (if (and eredis-process (eq (process-status eredis-process) 'open))
-      (progn 
-        (process-send-string eredis-process (apply #'eredis-construct-unified-request command args))
-        (let ((resp (eredis-get-response)))
-          (eredis-parse-integer-response resp)))
-    (error "redis not connected")))
-
-(defun eredis-command-returning-status(command &rest args)
-  "Send a command that has the status code return type"
-  (if (and eredis-process (eq (process-status eredis-process) 'open))
-      (progn 
-        (process-send-string eredis-process (apply #'eredis-construct-unified-request command args))
-        (let ((resp (eredis-get-response)))
-          (let ((ret-val (eredis-trim-status-response resp)))
-            (if (eredis-status-response-success-p resp)
-                (progn
-                  (when (called-interactively-p 'any)
-                    (message ret-val))
-                  ret-val)
-              (error "redis error: %s" ret-val)))))
-    (error "redis not connected")))
-
 (defun eredis-get-map(keys)
   "given a map M of key/value pairs, go to Redis to retrieve the values and set the value to whatever it is in Redis (or nil if not found)"
   (let* ((m (make-hash-table))
@@ -265,391 +252,391 @@ but that's not supported on windows and doesn't make much difference"
 ;; key commands 
 
 (defun eredis-del(key &rest keys)
-  (apply #'eredis-command-returning-integer "del" key keys))  
+  (apply #'eredis-command-returning "del" key keys))  
 
 (defun eredis-exists(key)
   "Returns 1 if key exists and 0 otherwise"
-  (eredis-command-returning-integer "exists" key))
+  (eredis-command-returning "exists" key))
 
 (defun eredis-expire(key seconds)
   "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
-  (eredis-command-returning-integer "expire" key seconds))
+  (eredis-command-returning "expire" key seconds))
 
 (defun eredis-expireat(key unix-time)
   "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
-  (eredis-command-returning-integer "expireat" key unix-time))
+  (eredis-command-returning "expireat" key unix-time))
 
                                         ; http://redis.io/commands/keys
 
 (defun eredis-keys(pattern)
   "returns a list of keys where the key matches the provided
 pattern. see the link for the style of patterns"
-  (eredis-command-returning-multibulk "keys" pattern))
+  (eredis-command-returning "keys" pattern))
 
 (defun eredis-move(key db)
   "moves KEY to DB and returns 1 if it succeeds 0 otherwise"
-  (eredis-command-returning-integer "move" key db))
+  (eredis-command-returning "move" key db))
 
 ;; http://redis.io/commands/object
 
 (defun eredis-object(subcommand &rest args)
   "inspect the internals of Redis Objects associated with keys, best see the docs fo;r this one"
   (if (eq t (compare-strings "encoding" nil nil subcommand nil nil t))
-      (apply #'eredis-command-returning-bulk "object" subcommand args)
-    (apply #'eredis-command-returning-integer "object" subcommand args)))
+      (apply #'eredis-command-returning "object" subcommand args)
+    (apply #'eredis-command-returning "object" subcommand args)))
 
 (defun eredis-persist(key)
   "Remove the existing timeout on KEY and returns 1 if it succeeds 0 otherwise"
-  (eredis-command-returning-integer "persist" key))
+  (eredis-command-returning "persist" key))
 
 (defun eredis-randomkey()
   "get a random key from the redis db"
-  (eredis-command-returning-bulk "randomkey"))
+  (eredis-command-returning "randomkey"))
 
 (defun eredis-rename(key newkey)
   "renames KEY as NEWKEY"
-  (eredis-command-returning-status "rename" key newkey))
+  (eredis-command-returning "rename" key newkey))
 
 (defun eredis-renamenx(key newkey)
   "renames KEY as NEWKEY only if NEWKEY does not yet exist"
-  (eredis-command-returning-status "renamenx" key newkey))
+  (eredis-command-returning "renamenx" key newkey))
 
 (defun eredis-sort(key &rest args)
   "call the redis sort command with the specified KEY and ARGS"
-  (apply #'eredis-command-returning-multibulk "sort" key args))
+  (apply #'eredis-command-returning "sort" key args))
 
 (defun eredis-ttl(key)
   "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
-  (eredis-command-returning-integer "ttl" key))
+  (eredis-command-returning "ttl" key))
 
 (defun eredis-type(key)
   "Get the type of KEY"
-  (eredis-command-returning-status "type" key))
+  (eredis-command-returning "type" key))
 
 ;; string commands
 
 (defun eredis-append(key value)
   "Append VALUE to value of KEY"
-  (eredis-command-returning-integer "append" key value))
+  (eredis-command-returning "append" key value))
 
 (defun eredis-decr(key)
   "decrement value of KEY"
-  (eredis-command-returning-integer "decr" key))
+  (eredis-command-returning "decr" key))
 
 (defun eredis-decrby(key decrement)
   "decrement value of KEY by DECREMENT"
-  (eredis-command-returning-integer "decrby" key decrement))
+  (eredis-command-returning "decrby" key decrement))
 
 (defun eredis-get(key)
   "redis get"
-  (eredis-command-returning-bulk "get" key))
+  (eredis-command-returning "get" key))
 
 (defun eredis-getbit(key offset)
   "redis getbit"
-  (eredis-command-returning-integer "getbit" key offset))
+  (eredis-command-returning "getbit" key offset))
 
 (defun eredis-getrange(key start end)
   "redis getrange"
-  (eredis-command-returning-bulk "getrange" key start end))
+  (eredis-command-returning "getrange" key start end))
 
 (defun eredis-getset(key value)
   "redis atomic set and get old value"
-  (eredis-command-returning-bulk "getset" key value))
+  (eredis-command-returning "getset" key value))
 
 (defun eredis-incr(key)
   "increment value of KEY"
-  (eredis-command-returning-integer "incr" key))
+  (eredis-command-returning "incr" key))
 
 (defun eredis-incrby(key increment)
   "increment value of KEY by INCREMENT"
-  (eredis-command-returning-integer "incrby" key increment))
+  (eredis-command-returning "incrby" key increment))
 
                                         ; http://redis.io/commands/mget
 
 (defun eredis-mget(keys)
   "return the values of the specified keys, or nil if not present"
-  (apply #'eredis-command-returning-multibulk "mget" keys))
+  (apply #'eredis-command-returning "mget" keys))
 
 (defun eredis-mset(m)
   "set the keys and values of the map M in Redis using mset"
-  (apply #'eredis-command-returning-status "mset" (eredis-parse-map-or-list-arg m)))
+  (apply #'eredis-command-returning "mset" (eredis-parse-map-or-list-arg m)))
 
 (defun eredis-msetnx(m)
   "set the keys and values of the map M in Redis using msetnx (only if all are not existing)"
-  (apply #'eredis-command-returning-integer "msetnx" (eredis-parse-map-or-list-arg m)))
+  (apply #'eredis-command-returning "msetnx" (eredis-parse-map-or-list-arg m)))
 
 (defun eredis-set(k v)
   "set the key K and value V in Redis"
-  (eredis-command-returning-status "set" k v))
+  (eredis-command-returning "set" k v))
 
 (defun eredis-setbit(key offset value)
   "redis setbit"
-  (eredis-command-returning-integer "setbit" key offset value))
+  (eredis-command-returning "setbit" key offset value))
 
 (defun eredis-setex(key seconds value)
   "eredis setex"
-  (eredis-command-returning-status "setex" key seconds value))
+  (eredis-command-returning "setex" key seconds value))
 
 (defun eredis-setnx(k v)
   "set if not exist"
-  (eredis-command-returning-integer "setnx" k v))
+  (eredis-command-returning "setnx" k v))
 
 (defun eredis-setrange(key offset value)
   "redis setrange"
-  (eredis-command-returning-integer "setrange" key offset value))
+  (eredis-command-returning "setrange" key offset value))
 
 (defun eredis-strlen(key)
   "redis strlen"
-  (eredis-command-returning-integer "strlen" key))
+  (eredis-command-returning "strlen" key))
 
 ;; hash commands
 
 (defun eredis-hget(key field)
   "redis hget"
-  (eredis-command-returning-bulk "hget" key field))
+  (eredis-command-returning "hget" key field))
 
 (defun eredis-hset(key field value)
   "redis hset"
-  (eredis-command-returning-integer "hset" key field value))
+  (eredis-command-returning "hset" key field value))
 
 (defun eredis-hsetnx(key field value)
   "redis hsetnx"
-  (eredis-command-returning-integer "hsetnx" key field value))
+  (eredis-command-returning "hsetnx" key field value))
 
 (defun eredis-hmget(key field &rest fields)
   "redis hmget"
-  (apply #'eredis-command-returning-multibulk "hmget" key field fields))
+  (apply #'eredis-command-returning "hmget" key field fields))
 
 (defun eredis-hmset(key m)
   "redis hmset set multiple key values on the key KEY using an emacs lisp map M or list of key values"
-  (apply #'eredis-command-returning-status "hmset" key (eredis-parse-map-or-list-arg m)))
+  (apply #'eredis-command-returning "hmset" key (eredis-parse-map-or-list-arg m)))
 
 (defun eredis-hincrby(key field integer)
   "increment FIELD on KEY by INTEGER"
-  (eredis-command-returning-integer "hincrby" key field integer))
+  (eredis-command-returning "hincrby" key field integer))
 
 (defun eredis-hexists(key field)
   "redis hexists"
-  (eredis-command-returning-integer "hexists" key field))
+  (eredis-command-returning "hexists" key field))
 
 (defun eredis-hdel(key field)
   "redis hdel"
-  (eredis-command-returning-integer "hdel" key field))
+  (eredis-command-returning "hdel" key field))
 
 (defun eredis-hlen(key)
   "redis hlen"
-  (eredis-command-returning-integer "hlen" key))
+  (eredis-command-returning "hlen" key))
 
 (defun eredis-hkeys(key)
   "redis hkeys"
-  (eredis-command-returning-multibulk "hkeys" key))
+  (eredis-command-returning "hkeys" key))
 
 (defun eredis-hvals(key)
   "redis hvals"
-  (eredis-command-returning-multibulk "hvals" key))
+  (eredis-command-returning "hvals" key))
 
 (defun eredis-hgetall(key)
   "redis hgetall"
-  (eredis-command-returning-multibulk "hgetall" key))
+  (eredis-command-returning "hgetall" key))
 
 ;; list commands
 
 (defun eredis-llen(key)
   "length of list"
-  (eredis-command-returning-integer "llen" key))
+  (eredis-command-returning "llen" key))
 
 (defun eredis-lpop(key)
   "list pop first element"
-  (eredis-command-returning-bulk "lpop" key))
+  (eredis-command-returning "lpop" key))
 
 (defun eredis-lpush(key value &rest values)
   "Prepend value(s) to a list stored by KEY"
-  (apply #'eredis-command-returning-integer "lpush" key value values))
+  (apply #'eredis-command-returning "lpush" key value values))
 
 (defun eredis-rpush(key value &rest values)
   "Append value(s) to a list stored by KEY"
-  (apply #'eredis-command-returning-integer "rpush" key value values))
+  (apply #'eredis-command-returning "rpush" key value values))
 
 (defun eredis-lpushx(key value)
   "Prepend value(s) to a list stored by KEY if it doesn't exist already"
-  (eredis-command-returning-integer "lpushx" key value))
+  (eredis-command-returning "lpushx" key value))
 
 (defun eredis-rpushx(key value)
   "Append value(s) to a list stored by KEY if it doesn't exist already"
-  (eredis-command-returning-integer "rpushx" key value))
+  (eredis-command-returning "rpushx" key value))
 
 (defun eredis-lindex(key index)
   "list element INDEX to a list stored by KEY"
-  (eredis-command-returning-bulk "lindex" key index))
+  (eredis-command-returning "lindex" key index))
 
 (defun eredis-blpop(key &rest rest)
   "blocking left pop of multiple lists, rest is actually as many keys as you want and a timeout"
-  (apply #'eredis-command-returning-multibulk "blpop" key rest))
+  (apply #'eredis-command-returning "blpop" key rest))
 
 (defun eredis-brpop(key &rest rest)
   "blocking right pop of multiple lists, rest is actually as many keys as you want and a timeout"
-  (apply #'eredis-command-returning-multibulk "brpop" key rest))
+  (apply #'eredis-command-returning "brpop" key rest))
 
 (defun eredis-lrange(key start stop)
   "redis lrange"
-  (eredis-command-returning-multibulk "lrange" key start stop))
+  (eredis-command-returning "lrange" key start stop))
 
 (defun eredis-linsert(key position pivot value)
   "redis linsert"
-  (eredis-command-returning-integer "linsert" key position pivot value))
+  (eredis-command-returning "linsert" key position pivot value))
 
 (defun eredis-brpoplpush(source destination timeout)
   "redis brpoplpush"
-  (eredis-command-returning-bulk "brpoplpush" source destination timeout))
+  (eredis-command-returning "brpoplpush" source destination timeout))
 
 (defun eredis-rpoplpush(source destination timeout)
   "redis rpoplpush"
-  (eredis-command-returning-bulk "rpoplpush" source destination))
+  (eredis-command-returning "rpoplpush" source destination))
 
 (defun eredis-lrem(key count value)
   "redis lrem"
-  (eredis-command-returning-integer "lrem" key count value))
+  (eredis-command-returning "lrem" key count value))
 
 (defun eredis-lset(key index value)
   "redis lset"
-  (eredis-command-returning-status "lset" key index value))
+  (eredis-command-returning "lset" key index value))
 
 (defun eredis-ltrim(key start stop)
   "redis ltrim"
-  (eredis-command-returning-status "ltrim" key start stop))
+  (eredis-command-returning "ltrim" key start stop))
 
 (defun eredis-rpop(key)
   "right pop of list"
-  (eredis-command-returning-bulk "rpop" key))
+  (eredis-command-returning "rpop" key))
 
 ;; set commands
 
 (defun eredis-sadd(key member &rest members)
   "redis add to set"
-  (apply #'eredis-command-returning-integer "sadd" key member members))
+  (apply #'eredis-command-returning "sadd" key member members))
 
 (defun eredis-scard(key)
   "redis scard"
-  (eredis-command-returning-integer "scard" key))
+  (eredis-command-returning "scard" key))
 
 (defun eredis-sdiff(key &rest keys)
   "redis sdiff"
-  (apply #'eredis-command-returning-multibulk "sdiff" key keys))
+  (apply #'eredis-command-returning "sdiff" key keys))
 
 (defun eredis-sdiffstore(destination key &rest keys)
   "redis sdiffstore"
-  (apply #'eredis-command-returning-integer "sdiffstore" destination key keys))
+  (apply #'eredis-command-returning "sdiffstore" destination key keys))
 
 (defun eredis-sinter(key &rest keys)
   "redis sinter"
-  (apply #'eredis-command-returning-multibulk "sinter" key keys))
+  (apply #'eredis-command-returning "sinter" key keys))
 
 (defun eredis-sinterstore(destination key &rest keys)
   "redis sinterstore"
-  (apply #'eredis-command-returning-integer "sinterstore" destination key keys))
+  (apply #'eredis-command-returning "sinterstore" destination key keys))
 
 (defun eredis-sismember(key member)
   "redis sdiffstore"
-  (eredis-command-returning-integer "sismember" key member))
+  (eredis-command-returning "sismember" key member))
 
 (defun eredis-smembers(key)
   "redis smembers"
-  (eredis-command-returning-multibulk "smembers" key))
+  (eredis-command-returning "smembers" key))
 
 (defun eredis-smove(source destination member)
   "redis smove"
-  (eredis-command-returning-integer "smove" source destination member))
+  (eredis-command-returning "smove" source destination member))
 
 (defun eredis-spop(key)
   "redis spop"
-  (eredis-command-returning-bulk "spop" key))
+  (eredis-command-returning "spop" key))
 
 (defun eredis-srandmember(key)
   "redis srandmember"
-  (eredis-command-returning-bulk "srandmember" key))
+  (eredis-command-returning "srandmember" key))
 
 (defun eredis-srem(key member &rest members)
   "redis srem"
-  (apply #'eredis-command-returning-integer "srem" key member members))
+  (apply #'eredis-command-returning "srem" key member members))
 
 (defun eredis-sunion(key &rest keys)
   "redis sunion"
-  (apply #'eredis-command-returning-multibulk "sunion" key keys))
+  (apply #'eredis-command-returning "sunion" key keys))
 
 (defun eredis-sunionstore(destination key &rest keys)
   "redis sunionstore"
-  (apply #'eredis-command-returning-integer "sunionstore" destination key keys))
+  (apply #'eredis-command-returning "sunionstore" destination key keys))
 
 
 ;; sorted set commands
 
 (defun eredis-zadd(key score member)
   "redis zadd"
-  (eredis-command-returning-integer "zadd" key score member))
+  (eredis-command-returning "zadd" key score member))
 
 (defun eredis-zcard(key)
   "redis zcard"
-  (eredis-command-returning-integer "zcard" key))
+  (eredis-command-returning "zcard" key))
 
 (defun eredis-zcount(key min max)
   "redis zcount"
-  (eredis-command-returning-integer "zcount" key min max))
+  (eredis-command-returning "zcount" key min max))
 
 (defun eredis-zincrby(key increment member)
   "redis zincrby"
-  (eredis-command-returning-bulk "zincrby" key increment member))
+  (eredis-command-returning "zincrby" key increment member))
 
 (defun eredis-zinterstore(destination numkeys key &rest rest)
   "redis zinterstore"
-  (apply #'eredis-command-returning-integer "zinterstore" destination numkeys key rest))
+  (apply #'eredis-command-returning "zinterstore" destination numkeys key rest))
 
 (defun eredis-zrange(key start stop &optional withscores)
   "eredis zrange. withscores can be the string \"withscores\", the symbol 'withscores"
   (if (null withscores)
-      (eredis-command-returning-multibulk "zrange" key start stop)
-    (eredis-command-returning-multibulk "zrange" key start stop withscores)))
+      (eredis-command-returning "zrange" key start stop)
+    (eredis-command-returning "zrange" key start stop withscores)))
 
 (defun eredis-zrangebyscore(key min max &rest rest)
   "eredis zrangebyscore"
-  (apply #'eredis-command-returning-multibulk "zrangebyscore" key min max rest))
+  (apply #'eredis-command-returning "zrangebyscore" key min max rest))
 
 (defun eredis-zrank(key member)
   "redis zrank"
-  (eredis-command-returning-integer "zrank" key member))
+  (eredis-command-returning "zrank" key member))
 
 (defun eredis-zrem(key member)
   "redis zrem"
-  (eredis-command-returning-integer "zrem" key member))
+  (eredis-command-returning "zrem" key member))
 
 (defun eredis-zremrangebyrank(key start stop)
   "redis zremrangebyrank"
-  (eredis-command-returning-integer "zremrangebyrank" key start stop))
+  (eredis-command-returning "zremrangebyrank" key start stop))
 
 (defun eredis-zremrangebyscore(key min max)
   "redis zremrangebyscore"
-  (eredis-command-returning-integer "zremrangebyscore" key min max))
+  (eredis-command-returning "zremrangebyscore" key min max))
 
 (defun eredis-zrevrange(key start stop &optional withscores)
   "eredis zrevrange. withscores can be the string \"withscores\", the symbol 'withscores"
   (if (null withscores)
-      (eredis-command-returning-multibulk "zrevrange" key start stop)
-    (eredis-command-returning-multibulk "zrevrange" key start stop withscores)))
+      (eredis-command-returning "zrevrange" key start stop)
+    (eredis-command-returning "zrevrange" key start stop withscores)))
 
 (defun eredis-zrevrangebyscore(key min max &rest rest)
   "eredis zrevrangebyscore"
-  (apply #'eredis-command-returning-multibulk "zrevrangebyscore" key min max rest))
+  (apply #'eredis-command-returning "zrevrangebyscore" key min max rest))
 
 (defun eredis-zrevrank(key member)
   "redis zrevrank"
-  (eredis-command-returning-integer "zrevrank" key member))
+  (eredis-command-returning "zrevrank" key member))
 
 (defun eredis-zscore(key member)
   "redis zscore"
-  (eredis-command-returning-bulk "zscore" key member))
+  (eredis-command-returning "zscore" key member))
 
 (defun eredis-zunionstore(destination numkeys key &rest rest)
   "redis zunionstore"
-  (apply #'eredis-command-returning-integer destination numkeys key rest))
+  (apply #'eredis-command-returning destination numkeys key rest))
 
 ;; pub/sub commands
 
@@ -659,40 +646,40 @@ pattern. see the link for the style of patterns"
 
 (defun eredis-publish(channel message)
   "eredis publish"
-  (eredis-command-returning-integer "publish" channel message))
+  (eredis-command-returning "publish" channel message))
 
 (defun eredis-subscribe(channel &rest channels)
   "eredis subscribe"
-  (apply #'eredis-command-returning-multibulk "subscribe" channel channels))
+  (apply #'eredis-command-returning "subscribe" channel channels))
 
 (defun eredis-psubscribe(pattern &rest patterns)
   "eredis psubscribe"
-  (apply #'eredis-command-returning-multibulk "psubscribe" pattern patterns))
+  (apply #'eredis-command-returning "psubscribe" pattern patterns))
 
 (defun eredis-unsubscribe(channel &rest channels)
   "eredis unsubscribe"
-  (apply #'eredis-command-returning-multibulk "unsubscribe" channel channels))
+  (apply #'eredis-command-returning "unsubscribe" channel channels))
 
 (defun eredis-punsubscribe(pattern &rest patterns)
   "eredis punsubscribe"
-  (apply #'eredis-command-returning-multibulk "punsubscribe" pattern patterns))
+  (apply #'eredis-command-returning "punsubscribe" pattern patterns))
 
 (defun eredis-await-message()
   "Not a redis command. After subscribe or psubscribe, call this  to poll each
 message and call unsubscribe or punsubscribe when done. Other commands will fail
 with an error until then"
   (let ((resp (eredis-get-response)))
-    (eredis-parse-multi-bulk resp)))
+    (eredis-parse-multi-bulk-response resp)))
 
 ;; transaction commands
 
 (defun eredis-discard()
   "eredis discard"
-  (eredis-command-returning-status "discard"))
+  (eredis-command-returning "discard"))
 
 (defun eredis-multi()
   "eredis multi"
-  (eredis-command-returning-status "multi"))
+  (eredis-command-returning "multi"))
 
 ;; TODO this returns a multibulk which in turn will contain a sequence of responses to commands
 ;; executed. Best way to handle this is probably to return a list of responses
@@ -700,80 +687,80 @@ with an error until then"
 ;; which is the same issue I'm seeing with publish/subscribe results
 (defun eredis-exec()
   "eredis exec"
-  (eredis-command-returning-multibulk "exec"))
+  (eredis-command-returning "exec"))
 
 (defun eredis-watch(key &rest keys)
   "redis watch"
-  (apply #'eredis-command-returning-status "watch" key keys))
+  (apply #'eredis-command-returning "watch" key keys))
 
 (defun eredis-unwatch()
   "redis unwatch"
-  (eredis-command-returning-status "unwatch"))
+  (eredis-command-returning "unwatch"))
 
 ;; connection commands
 
 (defun eredis-auth(password)
   "eredis auth"
-  (eredis-command-returning-status "auth" password))
+  (eredis-command-returning "auth" password))
 
 (defun eredis-echo(message)
   "eredis echo"
-  (eredis-command-returning-bulk "echo" message))
+  (eredis-command-returning "echo" message))
 
 (defun eredis-ping()
   "redis ping"
   (interactive)
-  (eredis-command-returning-status "ping"))
+  (eredis-command-returning "ping"))
 
 (defun eredis-quit()
   "redis ping"
   (interactive)
-  (eredis-command-returning-status "quit"))
+  (eredis-command-returning "quit"))
 
 (defun eredis-select(index)
   "redis select db with INDEX"
   (interactive)
-  (eredis-command-returning-status "select" index))
+  (eredis-command-returning "select" index))
 
 ;; server commands 
 
 (defun eredis-bgrewriteaof()
-  (eredis-command-returning-status "bgrewriteaof"))
+  (eredis-command-returning "bgrewriteaof"))
 
 (defun eredis-bgsave()
-  (eredis-command-returning-status "bgsave"))
+  (eredis-command-returning "bgsave"))
 
 (defun eredis-config-get(parameter)
-  (eredis-command-returning-multibulk "config" "get" parameter))
+  (eredis-command-returning "config" "get" parameter))
 
 (defun eredis-config-set(parameter value)
-  (eredis-command-returning-status "config" "set" parameter value))
+  (eredis-command-returning "config" "set" parameter value))
 
 (defun eredis-config-resetstat()
-  (eredis-command-returning-status "config" "resetstat"))
+  (eredis-command-returning "config" "resetstat"))
 
 (defun eredis-dbsize()
-  (eredis-command-returning-integer "dbsize"))
+  (eredis-command-returning "dbsize"))
 
 (defun eredis-debug-object(key)
-  (eredis-command-returning-status "debug" "object" key))
+  (eredis-command-returning "debug" "object" key))
 
 (defun eredis-debug-segfault()
-  (eredis-command-returning-status "debug" "segfault"))
+  (eredis-command-returning "debug" "segfault"))
 
 (defun eredis-flushall()
-  (eredis-command-returning-status "flushall"))
+  (eredis-command-returning "flushall"))
 
 (defun eredis-flushdb()
-  (eredis-command-returning-status "flushdb"))
+  (eredis-command-returning "flushdb"))
 
 ;; TODO the response from this is a single bulk response but it could be further parsed into a map
 ;; It uses : to delimit the keys from values
 (defun eredis-info()
-  (eredis-command-returning-bulk "info"))
+  (eredis-command-returning "info"))
 
 (defun eredis-lastsave()
-  (eredis-command-returning-integer "lastsave"))
+  (eredis-command-returning "lastsave"))
 
 ;; TODO monitor opens up the *redis-buffer* and shows commands streaming 
 ;; but it does not yet follow along, they just go off the screen, so I need
@@ -802,7 +789,7 @@ with an error until then"
 
 
 (defun eredis-save()
-  (eredis-command-returning-status "save"))
+  (eredis-command-returning "save"))
 
 (defun eredis-shutdown()
   "shutdown redis server"
@@ -815,14 +802,14 @@ with an error until then"
         (eredis-kthxbye))))
 
 (defun eredis-slaveof(host port)
-  (eredis-command-returning-status "slaveof" host port))
+  (eredis-command-returning "slaveof" host port))
 
 ;; This is in the docs but not in the server I'm using 
 ;; (defun eredis-slowlog-len()
-;;   (eredis-command-returning-integer "slowlog" "len"))
+;;   (eredis-command-returning "slowlog" "len"))
 
 (defun eredis-sync()
-  (eredis-command-returning-status "sync"))
+  (eredis-command-returning "sync"))
 
 ;; Helpers 
 
