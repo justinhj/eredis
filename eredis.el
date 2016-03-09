@@ -128,6 +128,16 @@ as it first constructs a list of key value pairs then uses that to construct the
            (eredis-parse-status-response response))
           (t (error "unkown response-type:%s" response)))))
 
+(define-error 'eredis-incomplete-response-error
+  "The response is incomplete"
+  'user-error)
+
+(defun eredis-response-basic-check (resp)
+  (when resp
+    (unless (string-suffix-p "\r\n" resp)
+      (signal 'eredis-incomplete-response-error resp))
+    resp))
+
 (defun eredis-trim-status-response(resp)
   "strip the leading character +/- and the final carriage returns"
   (let ((len (length resp)))
@@ -135,48 +145,55 @@ as it first constructs a list of key value pairs then uses that to construct the
 
 (defun eredis-parse-integer-response(resp)
   "parse integer response type"
-  (when resp
+  (when (eredis-response-basic-check resp)
     (string-to-number (cl-subseq resp 1))))
 
 (defun eredis-parse-error-response (response)
-  (when response
+  (when (eredis-response-basic-check resp)
     (error "redis error: %s" (eredis-trim-status-response response))))
 
 (defun eredis-parse-status-response (response)
-  (when response
+  (when (eredis-response-basic-check resp)
     (eredis-trim-status-response response)))
+
+(defun eredis-parse-bulk-response--inner (resp)
+  "parse the redis bulk response RESP and return the result and rest unparsed resp"
+  (when (eredis-response-basic-check resp)
+    (condition-case nil
+        (progn
+          (unless (string-match "^$\\([-0-9]+\\)\r\n" resp)
+            (signal 'eredis-incomplete-response-error resp))
+          (let ((count (string-to-number (match-string 1 resp)))
+                (body-start (match-end 0)))
+            (if (> count 0)
+                (cons (substring resp body-start (+ count body-start))
+                      (substring resp (+ count body-start 2)))
+              (cons nil
+                    (substring resp (+ count body-start))))))
+      (error  (signal 'eredis-incomplete-response-error resp)))))
+
+(defun eredis-parse-bulk-response (resp)
+  "parse the redis bulk response RESP and return the result"
+  (car (eredis-parse-bulk-response--inner resp)))
 
 (defun eredis-parse-multi-bulk-response (resp)
   "parse the redis multi bulk response RESP and return the list of results. handles null entries when
 length is -1 as per spec"
-  (when resp
-    (let ((num-values (string-to-number (cl-subseq resp 1))))
-      (if (<= num-values 0)
-          nil
-        (let ((return-list nil)
-              (parse-pos (string-match "^\\$" resp)))
-          (dotimes (n num-values)
-            (let ((len (string-to-number (cl-subseq resp (1+ parse-pos)))))
-              (string-match "\r\n" resp parse-pos)
-              (setf parse-pos (match-end 0))
-              (if (= len -1)
-                  (setf return-list (cons nil return-list))
-                (unless (and parse-pos (> parse-pos 0))
-                  (error "parse error"))
-                (setf return-list (cons (cl-subseq resp parse-pos (+ len parse-pos)) return-list)))
-              (setf parse-pos (string-match "^\\$" resp parse-pos))))
-          (reverse return-list))))))
-
-(defun eredis-parse-bulk-response (resp)
-  "parse the redis bulk response RESP and return the result"
-  (when resp
-    (let ((count (string-to-number (cl-subseq resp 1))))
-      (if (and (> count 0)
-               (string-match "\r\n" resp))
-          (let ((body-start (match-end 0)))
-            (when body-start
-              (cl-subseq resp body-start (+ count body-start))))
-        nil))))
+  (when (eredis-response-basic-check resp)
+    (condition-case nil
+        (progn
+          (unless (string-match "^*\\([0-9]+\\)\r\n" resp)
+            (signal 'eredis-incomplete-response-error resp))
+          (let ((num-values (string-to-number (match-string 1 resp)))
+                (return-list nil)
+                (parse-pos (match-end 0)))
+            (let ((resp (substring resp parse-pos)))
+              (dotimes (n num-values)
+                (let ((result (eredis-parse-bulk-response--inner resp)))
+                  (push (car result) return-list)
+                  (setq resp (cdr result)))))
+            (reverse return-list)))
+      (error  (signal 'eredis-incomplete-response-error resp)))))
 
 (defun eredis-command-returning (command &rest args)
   "Send a command that has the status code return type"
