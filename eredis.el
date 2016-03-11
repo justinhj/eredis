@@ -99,10 +99,16 @@ as it first constructs a list of key value pairs then uses that to construct the
   "await response from redis and store it in eredis-response. If it times out it will return nil"
   (let ((timeout (or requested-timeout
                      (process-get eredis-process 'eredis-timeout)
-                     300)))
-    (if (accept-process-output eredis-process timeout 0 t)
-        eredis-response
-      nil)))
+                     3))
+        (parsed-response))
+    (accept-process-output eredis-process timeout 0 t)
+    (condition-case resp
+        (progn
+          (setq eredis-response (process-get eredis-process 'eredis-response-str))
+          (setq parsed-response (eredis-parse-response eredis-response))
+          (setf (process-get eredis-process 'eredis-response-str) ""))
+      (eredis-incomplete-response-error (eredis-get-response requested-timeout)))
+    parsed-response))
 
 (defun eredis-response-type-of (response)
   (let ((chr (elt response 0))
@@ -114,7 +120,7 @@ as it first constructs a list of key value pairs then uses that to construct the
     (cdr (assoc chr chr-type-alist))))
 
 (defun eredis-parse-response (response)
-  (message "%s" resp)
+  (message "%s" response)
   (let ((response-type (eredis-response-type-of response)))
     (cond ((eq response-type 'error)
            (eredis-parse-error-response response))
@@ -148,13 +154,13 @@ as it first constructs a list of key value pairs then uses that to construct the
   (when (eredis-response-basic-check resp)
     (string-to-number (cl-subseq resp 1))))
 
-(defun eredis-parse-error-response (response)
+(defun eredis-parse-error-response (resp)
   (when (eredis-response-basic-check resp)
-    (error "redis error: %s" (eredis-trim-status-response response))))
+    (error "redis error: %s" (eredis-trim-status-response resp))))
 
-(defun eredis-parse-status-response (response)
+(defun eredis-parse-status-response (resp)
   (when (eredis-response-basic-check resp)
-    (eredis-trim-status-response response)))
+    (eredis-trim-status-response resp)))
 
 (defun eredis-parse-bulk-response--inner (resp)
   "parse the redis bulk response RESP and return the result and rest unparsed resp"
@@ -200,8 +206,7 @@ length is -1 as per spec"
   (if (and eredis-process (eq (process-status eredis-process) 'open))
       (progn 
         (process-send-string eredis-process (apply #'eredis-construct-unified-request command args))
-        (let* ((resp (eredis-get-response))
-               (ret-val (eredis-parse-response resp)))
+        (let* ((ret-val (eredis-get-response)))
           (when (called-interactively-p 'any)
             (message ret-val))
           ret-val))
@@ -223,7 +228,9 @@ length is -1 as per spec"
 
 (defun eredis-filter(process string)
   "filter function for redis network process, which receives output"
-  (setq eredis-response string))
+  (process-put process 'eredis-response-str (concat (or (process-get process 'eredis-response-str)
+                                                    "")
+                                                string)))
 
 (defun eredis-delete-process()
   (when eredis-process
@@ -685,8 +692,7 @@ pattern. see the link for the style of patterns"
   "Not a redis command. After subscribe or psubscribe, call this  to poll each
 message and call unsubscribe or punsubscribe when done. Other commands will fail
 with an error until then"
-  (let ((resp (eredis-get-response)))
-    (eredis-parse-multi-bulk-response resp)))
+  (eredis-get-response))
 
 ;; transaction commands
 
@@ -797,7 +803,7 @@ with an error until then"
                 ;;(recenter-top-bottom 'top)
                 (let ((resp (eredis-get-response 5)))
                   (when resp
-                    (eredis-buffer-message eredis-process resp))))))
+                    (eredis-buffer-message eredis-process eredis-response))))))
         ;; when the user hits C-g we send the quit command to exit
         ;; monitor mode
         (progn
