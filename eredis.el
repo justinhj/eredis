@@ -120,7 +120,6 @@ as it first constructs a list of key value pairs then uses that to construct the
     (cdr (assoc chr chr-type-alist))))
 
 (defun eredis-parse-response (response)
-  (message "%s" response)
   (let ((response-type (eredis-response-type-of response)))
     (cond ((eq response-type 'error)
            (eredis-parse-error-response response))
