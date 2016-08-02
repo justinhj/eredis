@@ -272,7 +272,8 @@ but that's not supported on windows and doesn't make much difference"
     (process-send-string eredis-process (concat command key-value-string))
     (eredis-get-response)))
 
-;; key commands 
+;; all the redis commands are documented at http://redis.io/commands
+;; key commands
 
 (defun eredis-del(key &rest keys)
   (apply #'eredis-command-returning "del" key keys))  
@@ -289,8 +290,6 @@ but that's not supported on windows and doesn't make much difference"
   "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
   (eredis-command-returning "expireat" key unix-time))
 
-                                        ; http://redis.io/commands/keys
-
 (defun eredis-keys(pattern)
   "returns a list of keys where the key matches the provided
 pattern. see the link for the style of patterns"
@@ -300,10 +299,9 @@ pattern. see the link for the style of patterns"
   "moves KEY to DB and returns 1 if it succeeds 0 otherwise"
   (eredis-command-returning "move" key db))
 
-;; http://redis.io/commands/object
-
 (defun eredis-object(subcommand &rest args)
-  "inspect the internals of Redis Objects associated with keys, best see the docs fo;r this one"
+  "inspect the internals of Redis Objects associated with keys,
+  best see the docs for this one. http://redis.io/commands/object"
   (if (eq t (compare-strings "encoding" nil nil subcommand nil nil t))
       (apply #'eredis-command-returning "object" subcommand args)
     (apply #'eredis-command-returning "object" subcommand args)))
@@ -373,8 +371,6 @@ pattern. see the link for the style of patterns"
 (defun eredis-incrby(key increment)
   "increment value of KEY by INCREMENT"
   (eredis-command-returning "incrby" key increment))
-
-                                        ; http://redis.io/commands/mget
 
 (defun eredis-mget(keys)
   "return the values of the specified keys, or nil if not present"
@@ -461,6 +457,19 @@ pattern. see the link for the style of patterns"
 (defun eredis-hgetall(key)
   "redis hgetall"
   (eredis-command-returning "hgetall" key))
+
+;; hyperloglog commands
+(defun eredis-pfadd(key value &rest values)
+  "add the elements to the named HyperLogLog"
+  (eredis-command-returning "pfadd" key value values))
+
+(defun eredis-pfcount(key &rest keys)
+  "return the approx cardinality of the HyperLogLog(s)"
+  (eredis-command-returning "pfcount" key keys))
+
+(defun eredis-pfmerge(dest src &rest srcs)
+  "merge all source keys into dest HyperLogLog"
+  (eredis-command-returning "pfmerge" dest src srcs))
 
 ;; list commands
 
@@ -688,9 +697,9 @@ pattern. see the link for the style of patterns"
   (apply #'eredis-command-returning "punsubscribe" pattern patterns))
 
 (defun eredis-await-message()
-  "Not a redis command. After subscribe or psubscribe, call this  to poll each
-message and call unsubscribe or punsubscribe when done. Other commands will fail
-with an error until then"
+  "Not a redis command. After subscribe or psubscribe, call this
+to poll each message and call unsubscribe or punsubscribe when
+done. Other commands will fail with an error until then"
   (eredis-get-response))
 
 ;; transaction commands
@@ -826,9 +835,11 @@ with an error until then"
 (defun eredis-slaveof(host port)
   (eredis-command-returning "slaveof" host port))
 
-;; This is in the docs but not in the server I'm using 
-;; (defun eredis-slowlog-len()
-;;   (eredis-command-returning "slowlog" "len"))
+(defun eredis-slowlog-len()
+  (eredis-command-returning "slowlog" "len"))
+
+(defun eredis-slowlog-get(&optional depth)
+  (eredis-command-returning "slowlog" "get" depth))
 
 (defun eredis-sync()
   (eredis-command-returning "sync"))
