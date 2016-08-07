@@ -1,4 +1,4 @@
-# eredis.el, a low level redis command library in elisp.
+# eredis.el, An emacs client for the Redis in-memory data structure store
 
 eredis isn't a comint style redis command line. Rather it's a
 programming to to write code that accesses data stored in redis. It's
