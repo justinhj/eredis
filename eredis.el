@@ -3,7 +3,7 @@
  
 ;; Author: Justin Heyes-Jones
 ;; URL: http://code.google.com/p/eredis/
-;; Version: 0.5.00
+;; Version: 0.6.00
 ;; Package-Requires: 
 
 ;; See for info on the protocol http://redis.io/topics/protocol
