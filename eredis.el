@@ -99,7 +99,7 @@ as it first constructs a list of key value pairs then uses that to construct the
         (let ((req (format "*%d\r\n$%d\r\n%s\r\n" num-args (length command) command)))
           (dolist (item arguments)
             (setf item (eredis--stringify-numbers-and-symbols item))
-            (setf req (concat req (format "$%d\r\n%s\r\n" (length item) item))))
+            (setf req (concat req (format "$%d\r\n%s\r\n" (string-bytes item) item))))
           req)
       nil)))
 
