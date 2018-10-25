@@ -2,43 +2,57 @@
 
 ## Introduction
 
-I thought it would be cool to be able to interact with Redis within emacs, and specifically to be able to pull keys into an org-table so you can easily edit it.
+eredis is a programming API so you can connect to Redis servers and have access to most of the API via emacs lisp. It also has some functionality to load keys into an org table, where you can edit the values and then push them back to the server.
+
+Currently this package does not support Windows Redis servers due to differences in newline handling. This is an open issue and pull requests are welcome.
 
 ## Installation
 
+### From source
+
 Download the latest version via svn or from the downloads page. Add the path you downloaded it to in your .emacs file:
 
+```
 (add-to-list 'load-path "~/eredis/")
 
 (require 'eredis)
+```
+
+### From Melpa
+
+[Melpa](https://melpa.org/):
+
+    M-x package-install eredis
 
 ## Usage
 
 First connect to the server. Some of the commands are interactive but all work from the emacs lisp REPL. To get that:
 
-M-x ielm
+`M-x ielm`
 
 A redis session begins by connecting to a server:
 
-(eredis-connect "localhost" "6379")
+`(eredis-connect "localhost" "6379")`
 
 and ends by closing the connection:
 
-(eredis-disconnect)
+`(eredis-disconnect)`
 
 Most commands receive a string response from Redis such as eredis-ping, which returns "PONG". Some return lists of strings, and others return maps of key value pairs. I've tried to follow the principle of least surprise when implementing each call.
 
 Some examples of basic usage:
 
-(eredis-set "key" "value") "ok"
+`(eredis-set "key" "value")`
+"ok"
 
-(eredis-get "key") "value"
+`(eredis-get "key")` 
+"value"
 
 ## Monitor Mode
 
 All commands work as you would expect, except for monitor. Monitor starts to show all the commands going to the Redis server, and as such does not fit with a single asynchronous API call. What I do instead is to switch you to the redis buffer where you can watch the commands. Hit C-g to exit this mode. You will need to reconnect to the Redis server once you are done, because the QUIT command that exits the client from monitor mode seems to close the connection too.
 
-(eredis-monitor)
+`(eredis-monitor)`
 
 ## Org table mode
 
@@ -48,6 +62,7 @@ Support so far includes creating org tables from various data types:
 
 And sending data from an org table (assumes string types only for now but will be expanded)
 
+```
 (eredis-org-table-from-set "s1")
 
 (eredis-org-table-from-zset "z1")
@@ -71,6 +86,7 @@ And sending data from an org table (assumes string types only for now but will b
 (defun eredis-org-table-row-set()
 
 "with point in an org table set the key and value"
+```
 
 More to come
 
@@ -80,8 +96,9 @@ Almost the entire Redis API works no problem, except for the publish subscribe c
 
 Supported Commands
 
-Use emacs function help (C-h f eredis- TAB) should give you a good idea what you can do...
+Use emacs function help `C-h f eredis- TAB` should give you a good idea what you can do...
 
+```
 ;; key commands 
 (defun eredis-del(key &rest keys)
 (defun eredis-exists(key)
@@ -235,5 +252,5 @@ Use emacs function help (C-h f eredis- TAB) should give you a good idea what you
 ;; (defun eredis-slowlog-len()
 ;; (eredis-command-returning-integer "slowlog" "len"))
 (defun eredis-sync()
-
+```
 
