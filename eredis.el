@@ -3,8 +3,8 @@
  
 ;; Author: Justin Heyes-Jones
 ;; URL: http://code.google.com/p/eredis/
-;; Version: 0.6.00
-;; Package-Requires: 
+;; Version: 0.7.00
+;; Package-Requires: (dash)
 
 ;; See for info on the protocol http://redis.io/topics/protocol
 ;; This is released under the Gnu License v3. See http://www.gnu.org/licenses/gpl.txt
@@ -17,14 +17,20 @@
 ;; ...
 ;; (eredis-disconnect)
 
-;; wiki http://code.google.com/p/eredis/wiki/wiki 
+;; Increasingly out of date wiki http://code.google.com/p/eredis/wiki/wiki 
 ;; videos http://code.google.com/p/eredis/wiki/demovideos
+;; The source is the best documentation
 
+(require 'org-element)
 (require 'org-table)
 (require 'cl-lib)
+(require 'dash)
 
 (defvar eredis-process nil "Current Redis client process")
+(defvar eredis-buffer-name "*eredis*" "Name of buffer which Redis responses are written to")
 (defvar eredis-response nil "Stores response of last Redis command")
+(defvar eredis-default-retries 3 "Number of times to retry waiting for a response to be completed")
+(defvar eredis-default-timeout 2 "Timeout in seconds before waiting for a response fails")
 
 ;; UTILS
 
@@ -111,21 +117,25 @@ as it first constructs a list of key value pairs then uses that to construct the
           (eredis--two-lists-to-map keys values))
       nil)))
 
-(defun eredis-get-response(&optional requested-timeout)
-  "await response from redis and store it in eredis-response. If it times out it will return nil"
-  (let ((timeout (or requested-timeout
-                     (process-get eredis-process 'eredis-timeout)
-                     3))
-        (parsed-response))
-    (accept-process-output eredis-process timeout 0 t)
-    (condition-case resp
-        (progn
-          (setq eredis-response (process-get eredis-process 'eredis-response-str))
-          (setq parsed-response (eredis-parse-response eredis-response))
-          (setf (process-get eredis-process 'eredis-response-str) ""))
-      (eredis-incomplete-response-error (eredis-get-response requested-timeout)))
-    parsed-response))
-
+(defun eredis-get-response(&optional retries requested-timeout start-point)
+  "Await response from redis and store it in eredis-response. If it times out it will return nil. Waits for `retries' number of times before failing. `requested-timeout' is how long to wait for a response timeout"
+  (with-current-buffer eredis-buffer-name
+    (let* ((timeout (or requested-timeout eredis-default-timeout))
+	   (retries-left (or retries eredis-default-retries))	 
+	   (here (or start-point (point-max)))
+	   (iterations retries-left))
+      (message (format "await response timeout %d retries %d here %d max %d" timeout retries-left here (point-max)))
+      (accept-process-output eredis-process timeout 0 t)
+      (condition-case resp
+          (progn
+            (setq eredis-response (buffer-substring here (point-max)))
+            (setq parsed-response (eredis-parse-response eredis-response)))
+	((eredis-incomplete-response-error
+	  (if (> retries-left 0)
+  	      (eredis-get-response (1- retries-left) timeout here)
+  	    'out-of-retries))))
+      parsed-response)))
+    
 (defun eredis-response-type-of (response)
   (let ((chr (elt response 0))
         (chr-type-alist '((?- . error)
@@ -179,6 +189,7 @@ as it first constructs a list of key value pairs then uses that to construct the
 
 (defun eredis-parse-bulk-response--inner (resp)
   "parse the redis bulk response RESP and return the result and rest unparsed resp"
+  (message (format "parse bulk %d" (length resp)))
   (when (eredis-response-basic-check resp)
     (condition-case nil
         (progn
@@ -191,15 +202,14 @@ as it first constructs a list of key value pairs then uses that to construct the
                       (substring resp (+ count body-start 2)))
               (cons nil
                     (substring resp (+ count body-start))))))
-      (error  (signal 'eredis-incomplete-response-error resp)))))
+      (error (signal 'eredis-incomplete-response-error resp)))))
 
 (defun eredis-parse-bulk-response (resp)
   "parse the redis bulk response RESP and return the result"
   (car (eredis-parse-bulk-response--inner resp)))
 
 (defun eredis-parse-multi-bulk-response (resp)
-  "parse the redis multi bulk response RESP and return the list of results. handles null entries when
-length is -1 as per spec"
+  "parse the redis multi bulk response RESP and return the list of results. handles null entries when length is -1 as per spec"
   (when (eredis-response-basic-check resp)
     (condition-case nil
         (progn
@@ -243,6 +253,7 @@ length is -1 as per spec"
 
 (defun eredis-filter(process string)
   "filter function for redis network process, which receives output"
+  (message (format "received %d bytes at process %s" (length string) eredis-process))
   (process-put process 'eredis-response-str (concat (or (process-get process 'eredis-response-str)
                                                     "")
                                                 string)))
@@ -255,24 +266,26 @@ length is -1 as per spec"
 ;; Connect and disconnect functionality
 
 (defun eredis-connect(host port &optional no-wait)
-  "connect to Redis on HOST PORT. NO-WAIT can be set to true to make the connection asynchronously
-but that's not supported on windows and doesn't make much difference"
-  (interactive (list (read-string "Host: ") (read-number "Port: " 6379)))
+  "Connect to Redis on HOST PORT. NO-WAIT can be set to true to make the connection asynchronously
+ that's not supported when you run on Windows and doesn't make much difference anyway"
+  (interactive (list (read-string "Host: " "localhost") (read-number "Port: " 6379)))
   (eredis-delete-process)
   (setq eredis-process
         (make-network-process :name "redis"
                               :host host
                               :service port
                               :type nil
+;;			      :coding 'utf-8-emacs
                               :nowait no-wait
-                              :filter #'eredis-filter
+                              ;;:filter #'eredis-filter
+;;			      :filter-multibyte t
                               :keepalive t
                               :linger t
                               :sentinel #'eredis-sentinel
-                              :buffer (get-buffer-create "*redis*"))))
+                              :buffer eredis-buffer-name)))
+
 (defalias 'eredis-hai 'eredis-connect)
 
-     
 (defun eredis-disconnect()
   "Close the connection to Redis"
   (interactive)
@@ -805,11 +818,17 @@ done. Other commands will fail with an error until then"
 (defun eredis-flushdb()
   (eredis-command-returning "flushdb"))
 
-;; TODO the response from this is a single bulk response but it could be further parsed into a map
-;; It uses : to delimit the keys from values
 (defun eredis-info()
-  (eredis-command-returning "info"))
-
+  "Call Redis INFO and return a map of key value pairs"
+  (interactive)
+  (->> (eredis-command-returning "info")
+       (split-string)
+       (--reduce-from (let ((keyvalue (split-string it ":")))
+			(when (= 2 (length keyvalue))
+			  (puthash (first keyvalue) (second keyvalue) acc))
+			acc)
+		      (make-hash-table :test 'equal))))
+    
 (defun eredis-lastsave()
   (eredis-command-returning "lastsave"))
 
@@ -820,7 +839,7 @@ done. Other commands will fail with an error until then"
   (if (and eredis-process (eq (process-status eredis-process) 'open))
       (unwind-protect
           (progn
-            (switch-to-buffer "*redis*")
+            (switch-to-buffer eredis-buffer-name)
             (goto-char (point-max))
             (eredis-buffer-message eredis-process "C-g to exit\n")
             (process-send-string eredis-process "monitor\r\n")
@@ -829,7 +848,7 @@ done. Other commands will fail with an error until then"
                 (redisplay t)
                 (sleep-for 1)
                 ;;(recenter-top-bottom 'top)
-                (let ((resp (eredis-get-response 5)))
+                (let ((resp (eredis-get-response 3 5)))
                   (when resp
                     (eredis-buffer-message eredis-process eredis-response))))))
         ;; when the user hits C-g we send the quit command to exit
@@ -1004,6 +1023,11 @@ column to a value, returning the result as a dotted pair"
               (cons key value)
             nil))
       nil)))
+
+(defun eredis-lolwut()
+  "Returns LOLWUT response (version 5 onwards)"
+  (interactive)
+  (eredis-command-returning "lolwut"))
 
 (defun eredis-org-table-mset()
   "with point in an org table convert the table to a map and send it to redis with mset"

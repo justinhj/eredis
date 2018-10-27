@@ -1,4 +1,4 @@
-# eredis.el, An emacs client for the Redis in-memory data structure store
+# eredis - An Emacs client API for Redis
 
 ## Introduction
 
@@ -20,7 +20,7 @@ Download the latest version via svn or from the downloads page. Add the path you
 
 ### From Melpa
 
-[Melpa](https://melpa.org/):
+[Melpa](https://melpa.org/)
 
     M-x package-install eredis
 
