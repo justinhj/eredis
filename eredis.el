@@ -21,6 +21,15 @@
 ;; videos http://code.google.com/p/eredis/wiki/demovideos
 ;; The source is the best documentation
 
+;; Ideas
+;; Buffer is used for all IO
+;; can use multiple processes and buffers to support more than one redis process
+;; commands take optional process-name or buffer name
+;; write a test suite that uses the buffer
+;; process stores point in output buffer as response start
+;; when fully processed can set point to end of response + 1
+;; tests can manipulate process point on a buffer of responses
+
 (require 'org-element)
 (require 'org-table)
 (require 'cl-lib)
@@ -121,22 +130,32 @@ as it first constructs a list of key value pairs then uses that to construct the
   "Await response from redis and store it in eredis-response. If it times out it will return nil. Waits for `retries' number of times before failing. `requested-timeout' is how long to wait for a response timeout"
   (with-current-buffer eredis-buffer-name
     (let* ((timeout (or requested-timeout eredis-default-timeout))
-	   (retries-left (or retries eredis-default-retries))	 
-	   (here (or start-point (point-max)))
+	   (retries-left (or retries eredis-default-retries))
+	   (here (or start-point (point)))
+
 	   (iterations retries-left))
       (message (format "await response timeout %d retries %d here %d max %d" timeout retries-left here (point-max)))
       (accept-process-output eredis-process timeout 0 t)
-      (condition-case resp
-          (progn
-            (setq eredis-response (buffer-substring here (point-max)))
-            (setq parsed-response (eredis-parse-response eredis-response)))
-	((eredis-incomplete-response-error
-	  (if (> retries-left 0)
-  	      (eredis-get-response (1- retries-left) timeout here)
-  	    'out-of-retries))))
-      parsed-response)))
+      (let ((parse-result (eredis-parse-response (buffer-substring here (point-max)))))
+	(message "boop")
+	(if (eq (cdr parse-result) 'incomplete)
+	    (if (> retries-left 0)
+		(eredis-get-response (1- retries-left) timeout here)
+	      (error "out of retries. response incomplete"))
+	  parse-result)))))
+
+      ;; (condition-case resp
+      ;;     (progn
+      ;;       (setq eredis-response (buffer-substring here (point-max)))
+      ;;       (setq parsed-response (eredis-parse-response eredis-response)))
+      ;; 	((eredis-incomplete-response-error
+      ;; 	  (if (> retries-left 0)
+      ;; 	      (eredis-get-response (1- retries-left) timeout here)
+      ;; 	    'out-of-retries))))
+      ;; parsed-response)))
     
 (defun eredis-response-type-of (response)
+  "Get the type of RESP response based on the initial character"
   (let ((chr (elt response 0))
         (chr-type-alist '((?- . error)
                           (?* . multi-bulk)
@@ -146,6 +165,7 @@ as it first constructs a list of key value pairs then uses that to construct the
     (cdr (assoc chr chr-type-alist))))
 
 (defun eredis-parse-response (response)
+  "Parse the response. Returns a cons of the type and the body. Body will 'incomplete if it is not yet fully downloaded"
   (let ((response-type (eredis-response-type-of response)))
     (cond ((eq response-type 'error)
            (eredis-parse-error-response response))
@@ -159,6 +179,7 @@ as it first constructs a list of key value pairs then uses that to construct the
            (eredis-parse-status-response response))
           (t (error "unkown response-type:%s" response)))))
 
+;; deprecated
 (define-error 'eredis-incomplete-response-error
   "The response is incomplete"
   'user-error)
@@ -187,6 +208,7 @@ as it first constructs a list of key value pairs then uses that to construct the
   (when (eredis-response-basic-check resp)
     (eredis-trim-status-response resp)))
 
+;; deprecated
 (defun eredis-parse-bulk-response--inner (resp)
   "parse the redis bulk response RESP and return the result and rest unparsed resp"
   (message (format "parse bulk %d" (length resp)))
@@ -195,9 +217,15 @@ as it first constructs a list of key value pairs then uses that to construct the
         (progn
           (unless (string-match "^$\\([-0-9]+\\)\r\n" resp)
             (signal 'eredis-incomplete-response-error resp))
+	  ;; count is size redis is sending
           (let ((count (string-to-number (match-string 1 resp)))
+		;; body start is the end of the header we matched above
                 (body-start (match-end 0)))
+	    (unless (= (length resp) count)
+	      (error (signal 'eredis-incomplete-response-error resp)))
+	    (message (format "length resp %d count %d" (length resp) count))
             (if (> count 0)
+		;; 
                 (cons (substring resp body-start (+ count body-start))
                       (substring resp (+ count body-start 2)))
               (cons nil
@@ -206,8 +234,16 @@ as it first constructs a list of key value pairs then uses that to construct the
 
 (defun eredis-parse-bulk-response (resp)
   "parse the redis bulk response RESP and return the result"
-  (car (eredis-parse-bulk-response--inner resp)))
+  (if (string-match "^$\\([0-9]+\\)\r\n" resp)
+      (let* ((body-size (string-to-number (match-string 1 resp)))
+	     (total-size (+ (length (match-string 1 resp)) 1 2 2 body-size))
+	     (body-start (match-end 0)))
+	(if (/= (string-bytes resp) total-size)
+	    '('single-bulk . 'incomplete)
+	  `(single-bulk . ,(substring resp body-start (+ body-start body-size)))))
+    '('single-bulk . 'incomplete)))
 
+  ;; wip deprecated
 (defun eredis-parse-multi-bulk-response (resp)
   "parse the redis multi bulk response RESP and return the list of results. handles null entries when length is -1 as per spec"
   (when (eredis-response-basic-check resp)
