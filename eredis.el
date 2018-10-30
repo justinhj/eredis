@@ -29,6 +29,8 @@
 ;; process stores point in output buffer as response start
 ;; when fully processed can set point to end of response + 1
 ;; tests can manipulate process point on a buffer of responses
+;; todo handle null when $-1 
+
 
 (require 'org-element)
 (require 'org-table)
@@ -126,23 +128,6 @@ as it first constructs a list of key value pairs then uses that to construct the
           (eredis--two-lists-to-map keys values))
       nil)))
 
-;; deprecated
-(defun eredis-get-response-deprecated(&optional retries requested-timeout start-point)
-  "Await response from redis and store it in eredis-response. If it times out it will return nil. Waits for `retries' number of times before failing. `requested-timeout' is how long to wait for a response timeout"
-  (with-current-buffer (process-buffer eredis-process)
-    (let* ((timeout (or requested-timeout eredis-default-timeout))
-	   (retries-left (or retries eredis-default-retries))
-	   (here (or start-point (point)))
-	   (iterations retries-left))
-      (message (format "await response timeout %d retries %d here %d max %d" timeout retries-left here (point-max)))
-      (accept-process-output eredis-process timeout 0 t)
-      (let ((parse-result (eredis-parse-response (buffer-substring here (point-max)))))
-	(if (eq (cdr parse-result) 'incomplete)
-	    (if (> retries-left 0)
-		(eredis-get-response (1- retries-left) timeout here)
-	      (error "out of retries. response incomplete"))
-	  parse-result)))))
-
 (defun eredis-get-response(process)
   (let ((buffer (process-buffer process))
 	(response-start (process-get process 'response-start)))
@@ -181,17 +166,10 @@ as it first constructs a list of key value pairs then uses that to construct the
            (eredis-parse-status-response response))
           (t (error "unkown response-type:%s" response)))))
 
-;; deprecated
-(define-error 'eredis-incomplete-response-error
-  "The response is incomplete"
-  'user-error)
-
-;; todo is this helpful?
-(defun eredis-response-basic-check (resp)
-  (when resp
-    (unless (string-suffix-p "\r\n" resp)
-      (signal 'eredis-incomplete-response-error resp))
-    resp))
+(defun eredis--basic-response-length (resp)
+  "Return the length of the response or fail with nil if it doesn't end wth \r\n"
+  (when (and resp (string-match "\r\n" resp))
+    (match-end 0)))
 
 (defun eredis-trim-status-response(resp)
   "strip the leading character +/- and the final carriage returns"
@@ -200,40 +178,17 @@ as it first constructs a list of key value pairs then uses that to construct the
 
 (defun eredis-parse-integer-response(resp)
   "parse integer response type"
-  (when (eredis-response-basic-check resp)
+  (when (eredis--basic-response-length resp)
     (string-to-number (cl-subseq resp 1))))
 
 (defun eredis-parse-error-response (resp)
-  (when (eredis-response-basic-check resp)
-    (error "redis error: %s" (eredis-trim-status-response resp))))
+  (eredis-parse-status-response resp))
 
 (defun eredis-parse-status-response (resp)
-  (when (eredis-response-basic-check resp)
-    (eredis-trim-status-response resp)))
-
-;; deprecated
-(defun eredis-parse-bulk-response--inner (resp)
-  "parse the redis bulk response RESP and return the result and rest unparsed resp"
-  (message (format "parse bulk %d" (length resp)))
-  (when (eredis-response-basic-check resp)
-    (condition-case nil
-        (progn
-          (unless (string-match "^$\\([-0-9]+\\)\r\n" resp)
-            (signal 'eredis-incomplete-response-error resp))
-	  ;; count is size redis is sending
-          (let ((count (string-to-number (match-string 1 resp)))
-		;; body start is the end of the header we matched above
-                (body-start (match-end 0)))
-	    (unless (= (length resp) count)
-	      (error (signal 'eredis-incomplete-response-error resp)))
-	    (message (format "length resp %d count %d" (length resp) count))
-            (if (> count 0)
-		;; 
-                (cons (substring resp body-start (+ count body-start))
-                      (substring resp (+ count body-start 2)))
-              (cons nil
-                    (substring resp (+ count body-start))))))
-      (error (signal 'eredis-incomplete-response-error resp)))))
+  (let ((len (eredis--basic-response-length resp)))
+    (if len
+	`(,(eredis-trim-status-response resp) . ,len)
+      '(incomplete 0))))
 
 (defun eredis-parse-bulk-response (resp)
   "Parse the redis bulk response `resp'. Returns the dotted pair of the result and the total length of the message including any line feeds and the header. If the result is incomplete return `incomplete' instead of the message so the caller knows to wait for more data from the process"
@@ -255,7 +210,7 @@ as it first constructs a list of key value pairs then uses that to construct the
   ;; wip deprecated
 (defun eredis-parse-multi-bulk-response (resp)
   "parse the redis multi bulk response RESP and return the list of results. handles null entries when length is -1 as per spec"
-  (when (eredis-response-basic-check resp)
+  (when (eredis--basic-response-length resp)
     (condition-case nil
         (progn
           (unless (string-match "^*\\([0-9]+\\)\r\n" resp)
@@ -489,9 +444,9 @@ pattern. see the link for the style of patterns"
   "set the keys and values of the map M in Redis using msetnx (only if all are not existing)"
   (apply #'eredis-command-returning "msetnx" (eredis-parse-map-or-list-arg m)))
 
-(defun eredis-set(k v)
+(defun eredis-set(k v &optional process)
   "set the key K and value V in Redis"
-  (eredis-command-returning "set" k v))
+  (eredis-command-returning "set" k v process))
 
 (defun eredis-setbit(key offset value)
   "redis setbit"
@@ -1096,10 +1051,10 @@ column to a value, returning the result as a dotted pair"
             nil))
       nil)))
 
-(defun eredis-lolwut()
+(defun eredis-lolwut(&optional process)
   "Returns LOLWUT response (version 5 onwards)"
   (interactive)
-  (eredis-command-returning "lolwut"))
+  (eredis-command-returning "lolwut" process))
 
 (defun eredis-org-table-mset()
   "with point in an org table convert the table to a map and send it to redis with mset"
