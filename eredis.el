@@ -186,6 +186,7 @@ as it first constructs a list of key value pairs then uses that to construct the
   "The response is incomplete"
   'user-error)
 
+;; todo is this helpful?
 (defun eredis-response-basic-check (resp)
   (when resp
     (unless (string-suffix-p "\r\n" resp)
@@ -239,12 +240,17 @@ as it first constructs a list of key value pairs then uses that to construct the
   (let ((unibyte (string-as-unibyte resp)))
     (if (string-match "^$\\([0-9]+\\)\r\n" unibyte)
 	(let* ((body-size (string-to-number (match-string 1 unibyte)))
-	       (total-size (+ (length (match-string 1 resp)) 1 2 2 body-size))
+	       (header-size (+ (length (match-string 1 resp)) 1 2 2))
+	       (total-size-bytes (+ header-size body-size))
 	       (body-start (match-end 0)))
-	  (if (< (length unibyte) total-size)
-	      `(incomplete . ,(length unibyte))
-	    `(,(substring unibyte body-start (+ body-start body-size)) . ,total-size)))
-      `(incomplete . ,(length unibyte)))))
+	  (if (< (length unibyte) total-size-bytes)
+	      `(incomplete . 0)
+	    (progn 
+	      (message (format "total size %d" total-size-bytes))
+	      (let ((message (string-as-multibyte
+			      (substring unibyte body-start (+ body-start body-size)))))
+		`(,message . ,(+ header-size (length message)))))))
+      `(incomplete . 0))))
 
   ;; wip deprecated
 (defun eredis-parse-multi-bulk-response (resp)
