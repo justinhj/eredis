@@ -129,6 +129,7 @@ as it first constructs a list of key value pairs then uses that to construct the
       nil)))
 
 (defun eredis-get-response(process)
+  "Given the process we try to get its buffer, and the next response start position (which is stored in the process properties under `response-start', we then identify the message type and parse the response. If we run out of response (maybe it isn't all downloaded yet we return `incomplete' otherwise we return the response, the format of which may depend on the request type"
   (let ((buffer (process-buffer process))
 	(response-start (process-get process 'response-start)))
     (with-current-buffer buffer
@@ -138,7 +139,7 @@ as it first constructs a list of key value pairs then uses that to construct the
 	(if (eq message 'incomplete)
 	    (message (format "incomplete message... %d" length))
 	  (prog1
-	      message ;; todo maybe return to multibyte
+	      message
 	    (process-put process 'response-start (+ response-start length))))))))
 	      
 (defun eredis-response-type-of (response)
@@ -200,11 +201,9 @@ as it first constructs a list of key value pairs then uses that to construct the
 	       (body-start (match-end 0)))
 	  (if (< (length unibyte) total-size-bytes)
 	      `(incomplete . 0)
-	    (progn 
-	      (message (format "total size %d" total-size-bytes))
-	      (let ((message (string-as-multibyte
-			      (substring unibyte body-start (+ body-start body-size)))))
-		`(,message . ,(+ header-size (length message)))))))
+	    (let ((message (string-as-multibyte
+			    (substring unibyte body-start (+ body-start body-size)))))
+	      `(,message . ,(+ header-size (length message))))))
       `(incomplete . 0))))
 
   ;; wip deprecated
@@ -282,9 +281,8 @@ as it first constructs a list of key value pairs then uses that to construct the
 
 ;; Connect and disconnect functionality
 
-(defun eredis-connect(host port &optional no-wait)
-  "Connect to Redis on HOST PORT. NO-WAIT can be set to true to make the connection asynchronously
- that's not supported when you run on Windows and doesn't make much difference anyway"
+(defun eredis-connect(host port &optional nowait)
+  "Connect to Redis on HOST PORT. `NOWAIT' can be set to non-nil to make the connection asynchronously. That's not supported when you run on Windows"
   (interactive (list (read-string "Host: " "localhost") (read-number "Port: " 6379)))
   (let ((buffer (eredis--generate-buffer host port)))	
     (prog1
@@ -293,7 +291,7 @@ as it first constructs a list of key value pairs then uses that to construct the
 				    :host host
 				    :service port
 				    :type nil
-				    :nowait no-wait
+				    :nowait nowait
 				    :keepalive t
 				    :linger t
 				    :sentinel #'eredis-sentinel
@@ -845,10 +843,9 @@ done. Other commands will fail with an error until then"
 (defun eredis-flushdb()
   (eredis-command-returning "flushdb"))
 
-(defun eredis-info()
-  "Call Redis INFO and return a map of key value pairs"
-  (interactive)
-  (->> (eredis-command-returning "info")
+(defun eredis-info(&optional process)
+  "Call Redis INFO and return a hash table of key value pairs"
+  (->> (eredis-command-returning "info" process)
        (split-string)
        (--reduce-from (let ((keyvalue (split-string it ":")))
 			(when (= 2 (length keyvalue))
