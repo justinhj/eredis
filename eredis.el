@@ -199,11 +199,14 @@ as it first constructs a list of key value pairs then uses that to construct the
 	       (header-size (+ (length (match-string 1 resp)) 1 2 2))
 	       (total-size-bytes (+ header-size body-size))
 	       (body-start (match-end 0)))
-	  (if (< (length unibyte) total-size-bytes)
-	      `(incomplete . 0)
-	    (let ((message (string-as-multibyte
-			    (substring unibyte body-start (+ body-start body-size)))))
-	      `(,message . ,(+ header-size (length message))))))
+	  (message (format "body size %d" body-size))
+	  (if (< body-size 0)
+	      `(,nil . ,header-size)
+	    (if (< (length unibyte) total-size-bytes)
+		`(incomplete . 0)
+	      (let ((message (string-as-multibyte
+			      (substring unibyte body-start (+ body-start body-size)))))
+		`(,message . ,(+ header-size (length message)))))))
       `(incomplete . 0))))
 
   ;; wip deprecated
