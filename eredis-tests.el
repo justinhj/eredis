@@ -49,6 +49,46 @@
 	 (parsed (eredis-parse-status-response response)))
     (should (equal parsed '("OK" . 5)))))
 
+;;;; multi bulk (array) responses
+
+(ert-deftest parse-zero-length-array-response()
+  (should (equal
+	   (eredis-parse-array-response "*0\r\n")
+	   '(nil . 4))))
+
+(ert-deftest parse-null-array-response()
+  (should (equal
+	   (eredis-parse-array-response "*-1\r\n")
+	   '(nil . 5))))
+	   
+;;nested array
+
+(ert-deftest parse-array-response()
+  (should (equal
+	   (eredis-parse-array-response "*2\r\n$5\r\nwinky\r\n$8\r\ngarfield\r\n")
+	   '(("garfield" "winky") . 29))))
+		 
+
+;; empty list
+
+"*0"
+
+;; missing list
+"$-1"
+
+;; nested array
+
+"*2\r\n
+*3\r\n
+:1\r\n
+:2\r\n
+:3\r\n
+*2\r\n
++Foo\r\n
+-Bar\r\n"
+
+
+
 
 
 

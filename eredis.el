@@ -151,7 +151,7 @@ as it first constructs a list of key value pairs then uses that to construct the
   "Get the type of RESP response based on the initial character"
   (let ((chr (elt response 0))
         (chr-type-alist '((?- . error)
-                          (?* . multi-bulk)
+                          (?* . array)
                           (?$ . single-bulk)
                           (?: . integer)
                           (?+ . status))))
@@ -162,8 +162,8 @@ as it first constructs a list of key value pairs then uses that to construct the
   (let ((response-type (eredis-response-type-of response)))
     (cond ((eq response-type 'error)
            (eredis-parse-error-response response))
-          ((eq response-type 'multi-bulk)
-           (eredis-parse-multi-bulk-response response))
+          ((eq response-type 'array)
+           (eredis-parse-array-response response))
           ((eq response-type 'single-bulk)
            (eredis-parse-bulk-response response))
           ((eq response-type 'integer)
@@ -184,8 +184,10 @@ as it first constructs a list of key value pairs then uses that to construct the
 
 (defun eredis-parse-integer-response(resp)
   "parse integer response type"
-  (when (eredis--basic-response-length resp)
-    (string-to-number (cl-subseq resp 1))))
+  (let ((len (eredis--basic-response-length resp)))
+    (if len 
+	`(,(string-to-number (cl-subseq resp 1)) . ,(length resp))
+      `(incomplete . 0))))
 
 (defun eredis-parse-error-response (resp)
   (eredis-parse-status-response resp))
@@ -194,7 +196,7 @@ as it first constructs a list of key value pairs then uses that to construct the
   (let ((len (eredis--basic-response-length resp)))
     (if len
 	`(,(eredis-trim-status-response resp) . ,len)
-      '(incomplete 0))))
+      '(incomplete . 0))))
 
 (defun eredis-parse-bulk-response (resp)
   "Parse the redis bulk response `resp'. Returns the dotted pair of the result and the total length of the message including any line feeds and the header. If the result is incomplete return `incomplete' instead of the message so the caller knows to wait for more data from the process"
@@ -217,21 +219,26 @@ as it first constructs a list of key value pairs then uses that to construct the
       `(incomplete . 0))))
 
   ;; wip rewriting
-(defun eredis-parse-multi-bulk-response (resp)
-  "parse the redis multi bulk response RESP and return the list of results. handles null entries when length is -1 as per spec"
-  
-  (if (string-match "^*\\([0-9]+\\)\r\n" resp)
-            (signal 'eredis-incomplete-response-error resp))
-          (let ((num-values (string-to-number (match-string 1 resp)))
-                (return-list nil)
-                (parse-pos (match-end 0)))
-            (let ((resp (substring resp parse-pos)))
-              (dotimes (n num-values)
-                (let ((result (eredis-parse-bulk-response--inner resp)))
-                  (push (car result) return-list)
-                  (setq resp (cdr result)))))
-            (reverse return-list)))
-      (error  (signal 'eredis-incomplete-response-error resp)))))
+(defun eredis-parse-array-response (resp)
+  "parse the redis array response RESP and return the list of results. handles null entries when length is -1 as per spec. handles lists of any type of thing, handles lists of lists etc"
+  (if (string-match "^*\\([\-]*[0-9]+\\)\r\n" resp)
+      (let ((array-length (string-to-number (match-string 1 resp)))
+	    (header-size (+ (length (match-string 1 resp)) 1 2)))
+	(case array-length
+	  (0
+	   `(() . 4))
+	  (-1
+	   `(nil . 5))
+	  (t
+	   (let ((things nil)
+		 (current-pos header-size))
+	     (dotimes (n array-length)
+	       (pcase-let ((`(,message . ,length)
+			    (eredis-parse-response (substring resp current-pos nil))))
+		 (incf current-pos length)
+		 (!cons message things)))
+	     `(,things . ,current-pos)))))
+    `(incomplete . 0)))
 
 (defun remove-last(lst) (reverse (cdr (reverse lst))))
 
