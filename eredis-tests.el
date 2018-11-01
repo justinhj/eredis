@@ -49,6 +49,9 @@
 	 (parsed (eredis-parse-status-response response)))
     (should (equal parsed '("OK" . 5)))))
 
+(eredis-parse-status-response "+OK\r\nextrastuff")
+(eredis--basic-response-length "+OK\r\nextrastuff")
+ 
 ;;;; parse integer
 
 (ert-deftest parse-int-response()
@@ -85,13 +88,12 @@
 
 ;; nested array
 
-(eredis-parse-array-response "*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+Foo\r\n-Bar\r\n")
+(ert-deftest parse-nested-array()
+  (should
+   (equal
+    (eredis-parse-response "*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+Foo\r\n-Bar\r\n")
+    '((("Bar" "Foo") (3 2 1)) . 36))))
 
-(trace-function-background #'substring "*trace-output*")
-
-(substring "ass" 0 1)
-
-(eredis-parse-response ":1\r\n")
 
 
 

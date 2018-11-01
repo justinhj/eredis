@@ -177,11 +177,6 @@ as it first constructs a list of key value pairs then uses that to construct the
   (when (and resp (string-match "\r\n" resp))
     (match-end 0)))
 
-(defun eredis-trim-status-response(resp)
-  "strip the leading character +/- and the final carriage returns"
-  (let ((len (length resp)))
-    (cl-subseq resp 1 (- len 2))))
-
 (defun eredis-parse-integer-response(resp)
   (let ((len (eredis--basic-response-length resp)))
     (if len	
@@ -194,7 +189,7 @@ as it first constructs a list of key value pairs then uses that to construct the
 (defun eredis-parse-status-response (resp)
   (let ((len (eredis--basic-response-length resp)))
     (if len
-	`(,(eredis-trim-status-response resp) . ,len)
+	`(,(substring resp 1 (- len 2)) . ,len)
       '(incomplete . 0))))
 
 (defun eredis-parse-bulk-response (resp)
