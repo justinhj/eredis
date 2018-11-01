@@ -37,7 +37,7 @@
 
 (ert-deftest parse-error-response()
   "Parsing error"
-  (let* ((response "-ERR Some error\r\n")
+  (let* ((response "-ERR Some error\r\nextrastuff")
 	 (parsed (eredis-parse-error-response response)))
     (should (equal parsed '("ERR Some error" . 17)))))
 
@@ -45,9 +45,16 @@
 
 (ert-deftest parse-status-response()
   "Parsing status"
-  (let* ((response "+OK\r\n")
+  (let* ((response "+OK\r\nextrastuff")
 	 (parsed (eredis-parse-status-response response)))
     (should (equal parsed '("OK" . 5)))))
+
+;;;; parse integer
+
+(ert-deftest parse-int-response()
+  (should
+   (equal (eredis-parse-integer-response ":1\r\nextrastuff")
+	  '(1 . 4))))
 
 ;;;; multi bulk (array) responses
 
@@ -71,21 +78,22 @@
 
 ;; empty list
 
-"*0"
+;; "*0"
 
 ;; missing list
-"$-1"
+;; "$-1"
 
 ;; nested array
 
-"*2\r\n
-*3\r\n
-:1\r\n
-:2\r\n
-:3\r\n
-*2\r\n
-+Foo\r\n
--Bar\r\n"
+(eredis-parse-array-response "*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+Foo\r\n-Bar\r\n")
+
+(trace-function-background #'substring "*trace-output*")
+
+(substring "ass" 0 1)
+
+(eredis-parse-response ":1\r\n")
+
+
 
 
 

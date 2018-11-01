@@ -183,10 +183,9 @@ as it first constructs a list of key value pairs then uses that to construct the
     (cl-subseq resp 1 (- len 2))))
 
 (defun eredis-parse-integer-response(resp)
-  "parse integer response type"
   (let ((len (eredis--basic-response-length resp)))
-    (if len 
-	`(,(string-to-number (cl-subseq resp 1)) . ,(length resp))
+    (if len	
+	`(,(string-to-number (cl-subseq resp 1)) . ,len)
       `(incomplete . 0))))
 
 (defun eredis-parse-error-response (resp)
@@ -224,6 +223,7 @@ as it first constructs a list of key value pairs then uses that to construct the
   (if (string-match "^*\\([\-]*[0-9]+\\)\r\n" resp)
       (let ((array-length (string-to-number (match-string 1 resp)))
 	    (header-size (+ (length (match-string 1 resp)) 1 2)))
+	(message (format "parse array length %d header %d resp %s" array-length header-size resp))
 	(case array-length
 	  (0
 	   `(() . 4))
@@ -233,8 +233,10 @@ as it first constructs a list of key value pairs then uses that to construct the
 	   (let ((things nil)
 		 (current-pos header-size))
 	     (dotimes (n array-length)
+	       (message (format "n %d current-pos %d" n current-pos))
 	       (pcase-let ((`(,message . ,length)
 			    (eredis-parse-response (substring resp current-pos nil))))
+		 (message (format "%s length %d" message length))
 		 (incf current-pos length)
 		 (!cons message things)))
 	     `(,things . ,current-pos)))))
