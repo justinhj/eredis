@@ -30,6 +30,11 @@
 ;; when fully processed can set point to end of response + 1
 ;; tests can manipulate process point on a buffer of responses
 ;; todo handle null when $-1 
+;; TODO rethink error reporting... it currently is not distinguishable to the user from a normal response, perhaps return a tuple ...
+;;; response type (incomplete, complete, error)
+;;; and body
+;;; note that this will change the API though
+;;; simpler solution is to throw the error
 
 
 (require 'org-element)
@@ -168,7 +173,7 @@ as it first constructs a list of key value pairs then uses that to construct the
           (t (error "unkown response-type:%s" response)))))
 
 (defun eredis--basic-response-length (resp)
-  "Return the length of the response or fail with nil if it doesn't end wth \r\n"
+  "Return the length of the response header or fail with nil if it doesn't end wth \r\n"
   (when (and resp (string-match "\r\n" resp))
     (match-end 0)))
 
@@ -194,28 +199,28 @@ as it first constructs a list of key value pairs then uses that to construct the
 (defun eredis-parse-bulk-response (resp)
   "Parse the redis bulk response `resp'. Returns the dotted pair of the result and the total length of the message including any line feeds and the header. If the result is incomplete return `incomplete' instead of the message so the caller knows to wait for more data from the process"
   (let ((unibyte (string-as-unibyte resp)))
-    (if (string-match "^$\\([0-9]+\\)\r\n" unibyte)
+    (if (string-match "^$\\([\-]*[0-9]+\\)\r\n" unibyte)
 	(let* ((body-size (string-to-number (match-string 1 unibyte)))
 	       (header-size (+ (length (match-string 1 resp)) 1 2 2))
 	       (total-size-bytes (+ header-size body-size))
 	       (body-start (match-end 0)))
 	  (message (format "body size %d" body-size))
 	  (if (< body-size 0)
-	      `(,nil . ,header-size)
-	    (if (< (length unibyte) total-size-bytes)
-		`(incomplete . 0)
-	      (let ((message (string-as-multibyte
-			      (substring unibyte body-start (+ body-start body-size)))))
-		`(,message . ,(+ header-size (length message)))))))
+	      `(,nil . ,(- header-size 2))
+	    (if (= body-size 0)
+		`("" . ,header-size)
+	      (if (< (length unibyte) total-size-bytes)
+		  `(incomplete . 0)
+		(let ((message (string-as-multibyte
+				(substring unibyte body-start (+ body-start body-size)))))
+		  `(,message . ,(+ header-size (length message))))))))
       `(incomplete . 0))))
 
-  ;; wip deprecated
+  ;; wip rewriting
 (defun eredis-parse-multi-bulk-response (resp)
   "parse the redis multi bulk response RESP and return the list of results. handles null entries when length is -1 as per spec"
-  (when (eredis--basic-response-length resp)
-    (condition-case nil
-        (progn
-          (unless (string-match "^*\\([0-9]+\\)\r\n" resp)
+  
+  (if (string-match "^*\\([0-9]+\\)\r\n" resp)
             (signal 'eredis-incomplete-response-error resp))
           (let ((num-values (string-to-number (match-string 1 resp)))
                 (return-list nil)
