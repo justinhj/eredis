@@ -20,7 +20,7 @@
 ;; wiki http://code.google.com/p/eredis/wiki/wiki 
 ;; videos http://code.google.com/p/eredis/wiki/demovideos
 
-(require 'org-table)
+;;(require 'org-table)
 (require 'cl-lib)
 
 (defvar eredis-process nil "Current Redis client process")
