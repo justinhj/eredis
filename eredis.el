@@ -57,12 +57,10 @@
 ;;; Everything here https://github.com/bbatsov/emacs-lisp-style-guide
 ;;; heading comments three semi colons, otherwise two
 
-;;(require 'org-element)
-;;(require 'org-table)
 (require 'cl)
 (require 'dash)
 
-(defvar eredis-process nil "Current Redis client process, used when the process is not passed in to the request")
+(defvar eredis--current-process nil "Current Redis client process, used when the process is not passed in to the request")
 
 ;; Util
 
@@ -251,11 +249,11 @@ as it first constructs a list of key value pairs then uses that to construct the
 (defun eredis--util-remove-last(lst) (reverse (cdr (reverse lst))))
 
 (defun eredis-command-returning (command &rest args)
-  "Send a command that has the status code return type. If the last argument is a process then that is the process used, otherwise it will use the value of `eredis-process'"
+  "Send a command that has the status code return type. If the last argument is a process then that is the process used, otherwise it will use the value of `eredis--current-process'"
   (let* ((last-arg (car (last args)))
 	 (process (if (processp last-arg)
 		      last-arg
-		    eredis-process))
+		    eredis--current-process))
 	 (command-args (eredis--util-remove-last args)))
     (if (and process (eq (process-status process) 'open))
 	(progn 
@@ -278,11 +276,11 @@ as it first constructs a list of key value pairs then uses that to construct the
   (eredis-buffer-message process (format "sentinel event %s" event))
   (when (eq 'closed (process-status process))
     (delete-process process)
-    (setq eredis-process nil)))
+    (setq eredis--current-process nil)))
 
 (defun eredis-filter(process string)
   "filter function for redis network process, which receives output"
-  (message (format "received %d bytes at process %s" (length string) eredis-process))
+  (message (format "received %d bytes at process %s" (length string) eredis--current-process))
   (process-put process 'eredis-response-str (concat (or (process-get process 'eredis-response-str)
                                                     "")
                                                 string)))
@@ -291,11 +289,11 @@ as it first constructs a list of key value pairs then uses that to construct the
   (if process
       (prog1 
 	  (delete-process process)
-	(when (eq eredis-process process)
-	    (setq eredis-process nil)))
-    (when eredis-process
-      (delete-process eredis-process)
-      (setq eredis-process nil))))
+	(when (eq eredis--current-process process)
+	    (setq eredis--current-process nil)))
+    (when eredis--current-process
+      (delete-process eredis--current-process)
+      (setq eredis--current-process nil))))
 
 ;; Create a unique buffer for each connection
 
@@ -309,7 +307,7 @@ as it first constructs a list of key value pairs then uses that to construct the
   (interactive (list (read-string "Host: " "localhost") (read-number "Port: " 6379)))
   (let ((buffer (eredis--generate-buffer host port)))	
     (prog1
-	(setq eredis-process
+	(setq eredis--current-process
               (make-network-process :name (buffer-name buffer)
 				    :host host
 				    :service port
@@ -319,13 +317,13 @@ as it first constructs a list of key value pairs then uses that to construct the
 				    :linger t
 				    :sentinel #'eredis-sentinel
 				    :buffer buffer))
-      (process-put eredis-process 'response-start 1))))
+      (process-put eredis--current-process 'response-start 1))))
 
 (defun eredis-clear-buffer(&optional process)
   "Erase the process buffer and reset the `response-start' property to the start"
   (let ((this-process (if (processp process)
 			  process
-			eredis-process)))
+			eredis--current-process)))
     (when (processp this-process)
       (with-current-buffer (process-buffer this-process)
 	(erase-buffer)
@@ -351,7 +349,7 @@ as it first constructs a list of key value pairs then uses that to construct the
 ;;     (maphash (lambda (k v)
 ;;                (setf key-value-string (concat key-value-string (format "$%d\r\n%s\r\n" (length k) k))))
 ;;              m)
-;;     (process-send-string eredis-process (concat command key-value-string))
+;;     (process-send-string eredis--current-process (concat command key-value-string))
 ;;     (eredis-get-response)))
 
 ;; all the redis commands are documented at http://redis.io/commands
@@ -623,7 +621,7 @@ pattern. see the link for the style of patterns"
   "right pop of list"
   (eredis-command-returning "rpop" key process))
 
-;; set commands
+;;; set commands
 
 (defun eredis-sadd(key member &rest members)
   "redis add to set"
@@ -885,7 +883,7 @@ done. Other commands will fail with an error until then"
 (defun eredis-monitor(&optional process)
   (let ((this-process (if process
 			  process
-			eredis-process)))
+			eredis--current-process)))
     (unwind-protect
         (progn
           (switch-to-buffer (process-buffer this-process))
@@ -914,22 +912,30 @@ done. Other commands will fail with an error until then"
   (interactive)
   ;; Note that this just sends the command and does not wait for or parse the response
   ;; since there shouldn't be one
-  (if (and eredis-process (eq (process-status eredis-process) 'open))
+  (if (and eredis--current-process (eq (process-status eredis--current-process) 'open))
       (progn 
-        (process-send-string eredis-process (eredis-build-request "shutdown"))
+        (process-send-string eredis--current-process (eredis-build-request "shutdown"))
         (eredis-kthxbye))))
 
-(defun eredis-slaveof(host port)
-  (eredis-command-returning "slaveof" host port))
+(defun eredis-slaveof(host port &optional process)
+  (eredis-command-returning "slaveof" host port process))
 
-(defun eredis-slowlog-len()
-  (eredis-command-returning "slowlog" "len"))
+(defun eredis-slowlog-len(&optional process)
+  (eredis-command-returning "slowlog" "len" process))
 
-(defun eredis-slowlog-get(&optional depth)
-  (eredis-command-returning "slowlog" "get" depth))
+(defun eredis-slowlog-get(&optional most-recent process)
+  (let ((recent (if most-recent
+		    most-recent
+		  100)))
+    (eredis-command-returning "slowlog" "get" recent process)))
 
-(defun eredis-sync()
-  (eredis-command-returning "sync"))
+(defun eredis-sync(&optional process)
+  (eredis-command-returning "sync" process))
+
+(defun eredis-lolwut(&optional process)
+  "Returns LOLWUT response (version 5 onwards)"
+  (interactive)
+  (eredis-command-returning "lolwut" process))
 
 ;; Helpers 
 
@@ -1072,11 +1078,6 @@ column to a value, returning the result as a dotted pair"
             nil))
       nil)))
 
-(defun eredis-lolwut(&optional process)
-  "Returns LOLWUT response (version 5 onwards)"
-  (interactive)
-  (eredis-command-returning "lolwut" process))
-
 (defun eredis-org-table-mset()
   "with point in an org table convert the table to a map and send it to redis with mset"
   (interactive)
@@ -1090,7 +1091,7 @@ column to a value, returning the result as a dotted pair"
     (eredis-msetnx m)))
 
 (defun eredis-org-table-row-set()
-  "with point in an org table set the key and value"
+  "With point in an org table set the key and value"
   (interactive)
   (let ((keyvalue (eredis-org-table-row-to-key-value-pair)))
     (eredis-set (car keyvalue) (cdr keyvalue))))

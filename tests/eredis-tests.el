@@ -94,13 +94,3 @@
     (eredis-parse-response "*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+Foo\r\n-Bar\r\n")
     '((("Bar" "Foo") (3 2 1)) . 36))))
 
-
-
-
-
-
-
-
-
-
-
