@@ -1,35 +1,52 @@
 ;;; eredis.el --- eredis, a Redis client in emacs lisp
-;; Copyright 2012-2018 Justin Heyes-Jones
+
+;; Copyright (C) 2012-2018 --- Justin Heyes-Jones
  
-;; Author: Justin Heyes-Jones
-;; URL: http://github.com/justinhj/eredis/
-;; Version: 0.9.0
+;; Author: Justin Heyes-Jones <justinhj@gmail.com>
+
+;; Version: 0.9
 ;; Package-Requires: (dash)
+;; Keywords: redis, api, tools, org
+;; URL: http://github.com/justinhj/eredis/
 
 ;; See for info on the protocol http://redis.io/topics/protocol
-;; This is released under the Gnu License v3. See http://www.gnu.org/licenses/gpl.txt
 
-;; Usage: 
-;; (eredis-connect "localhost" "6379")
-;; ...
-;; (eredis-set "key" "value") "ok"
-;; (eredis-get "key") "value"
-;; ...
-;; (eredis-disconnect)
+;;; Commentary:
 
-;; Increasingly out of date wiki http://code.google.com/p/eredis/wiki/wiki 
-;; videos http://code.google.com/p/eredis/wiki/demovideos
-;; The source is the best documentation
+;; Eredis provides a programmatic API for accessing Redis (in-memory data structure store/database) using emacs lisp.
+;; This software is released under the Gnu License v3. See http://www.gnu.org/licenses/gpl.txt
 
-;; Ideas
-;; Buffer is used for all IO
-;; can use multiple processes and buffers to support more than one redis process
-;; commands take optional process-name 
-;; write a test suite that uses a buffer not associated with a real connection
-;; process stores point in output buffer as response start
-;; when fully processed can set point to end of response + 1
-;; tests can manipulate process point on a buffer of responses
-;; todo handle null when $-1 
+;; Usage:
+
+;; Each redis connection creates a process and has an associated buffer which revieves data from the redis server
+
+;; (setq redis-p1 (eredis-connect "localhost" "6379"))
+;; (eredis-set "key" "value" redis-p1) "ok"
+;; (eredis-get "key" redis-p1) "value"
+
+;; Earlier versions of redis (pre 0.9) did not support multiple connections/processes. To preserve backwards compatibility you can omit the process argument from commands and an internal variable `redis-process' will track the most recent connection to be used by default. 
+
+;; You can close a connection like so. The process buffer can be closed seperately.
+;; (eredis-disconnect redis-p1)
+
+;;; 0.9 Changes
+
+;; Multiple connections to multiple redis servers supported
+;; Buffer is used for all output from the process (Redis)
+;; Github repo contains an ert test suite
+;; Fix for multibyte characters
+;; Support for LOLWUT (version 5.0 of Redis and later)
+
+;;; Github contributors
+
+;; justinhj
+;; pidu
+;; crispy 
+;; darksun
+;; lujun9972
+
+;;; Future TODO 
+
 ;; TODO rethink error reporting... it currently is not distinguishable to the user from a normal response, perhaps return a tuple ...
 ;;; response type (incomplete, complete, error)
 ;;; and body
@@ -40,24 +57,14 @@
 ;;; Everything here https://github.com/bbatsov/emacs-lisp-style-guide
 ;;; heading comments three semi colons, otherwise two
 
-
-(require 'org-element)
-(require 'org-table)
+;;(require 'org-element)
+;;(require 'org-table)
 (require 'cl)
 (require 'dash)
 
 (defvar eredis-process nil "Current Redis client process, used when the process is not passed in to the request")
-;;(defvar eredis-buffer-name "*eredis*" "Name of buffer which Redis responses are written to")
-;;(defvar eredis-response nil "Stores response of last Redis command")
-(defvar eredis-default-retries 3 "Number of times to retry waiting for a response to be completed")
-(defvar eredis-default-timeout 2 "Timeout in seconds before waiting for a response fails")
 
-;; UTILS
-
-(defun eredis-set-timeout(redis-process seconds)
-  "set how long emacs will wait for a response from redit, pay attention to this if using blocking 
-commands like blpop which also have a timeout" 
-  (process-put redis-process 'eredis-timeout seconds))
+;; Util
 
 (defun eredis--two-lists-to-map(key-list value-list)
   "take a list of keys LST1 and a list of values LST2 and make a hashmap, not particularly efficient
@@ -118,8 +125,8 @@ as it first constructs a list of key value pairs then uses that to construct the
    (t
     (error "unsupported type: %s" item))))
 
-(defun eredis-make-request(command &rest arguments)
-  "all redis commands are sent using this protocol"
+(defun eredis-build-request(command &rest arguments)
+  "Construct a command to send to Redis using the RESP protocol"
   (let ((num-args (+ 1 (length arguments))))
     (if (> num-args 0)
         (let ((req (format "*%d\r\n$%d\r\n%s\r\n" num-args (length command) command)))
@@ -162,7 +169,7 @@ as it first constructs a list of key value pairs then uses that to construct the
     (cdr (assoc chr chr-type-alist))))
 
 (defun eredis-parse-response (response)
-  "Parse the response. Returns a cons of the type and the body. Body will 'incomplete if it is not yet fully downloaded"
+  "Parse the response. Returns a cons of the type and the body. Body will be 'incomplete if it is not yet fully downloaded or corrupted. An error is thrown when parsing an unknown type"
   (let ((response-type (eredis-response-type-of response)))
     (cond ((eq response-type 'error)
            (eredis-parse-error-response response))
@@ -174,7 +181,7 @@ as it first constructs a list of key value pairs then uses that to construct the
            (eredis-parse-integer-response response))
           ((eq response-type 'status)
            (eredis-parse-status-response response))
-          (t (error "unkown response-type:%s" response)))))
+          (t (error "Unkown RESP response prefix: %c" (elt response 0))))))
 
 (defun eredis--basic-response-length (resp)
   "Return the length of the response header or fail with nil if it doesn't end wth \r\n"
@@ -218,7 +225,7 @@ as it first constructs a list of key value pairs then uses that to construct the
 
   ;; wip rewriting
 (defun eredis-parse-array-response (resp)
-  "parse the redis array response RESP and return the list of results. handles null entries when length is -1 as per spec. handles lists of any type of thing, handles lists of lists etc"
+  "Parse the redis array response RESP and return the list of results. handles null entries when length is -1 as per spec. handles lists of any type of thing, handles lists of lists etc"
   (if (string-match "^*\\([\-]*[0-9]+\\)\r\n" resp)
       (let ((array-length (string-to-number (match-string 1 resp)))
 	    (header-size (+ (length (match-string 1 resp)) 1 2)))
@@ -241,18 +248,18 @@ as it first constructs a list of key value pairs then uses that to construct the
 	     `(,things . ,current-pos)))))
     `(incomplete . 0)))
 
-(defun remove-last(lst) (reverse (cdr (reverse lst))))
+(defun eredis--util-remove-last(lst) (reverse (cdr (reverse lst))))
 
 (defun eredis-command-returning (command &rest args)
   "Send a command that has the status code return type. If the last argument is a process then that is the process used, otherwise it will use the value of `eredis-process'"
-  (let* ((last-arg (last args))
+  (let* ((last-arg (car (last args)))
 	 (process (if (processp last-arg)
 		      last-arg
 		    eredis-process))
-	 (command-args (remove-last args)))
+	 (command-args (eredis--util-remove-last args)))
     (if (and process (eq (process-status process) 'open))
 	(progn 
-          (process-send-string process (apply #'eredis-make-request command command-args))
+          (process-send-string process (apply #'eredis-build-request command command-args))
           (let ((ret-val (eredis-get-response process)))
             (when (called-interactively-p 'any)
               (message ret-val))
@@ -325,26 +332,27 @@ as it first constructs a list of key value pairs then uses that to construct the
 	(process-put this-process 'response-start 1)
 	t))))
 
-(defalias 'eredis-hai 'eredis-connect)
-
 (defun eredis-disconnect(&optional process)
   "Close the connection to Redis"
   (interactive)
   (eredis-delete-process process))
 
+;; legacy 'funny' names for connect and disconnect
+(defalias 'eredis-hai 'eredis-connect)
 (defalias 'eredis-kthxbye 'eredis-disconnect)
 
-(defun eredis-get-map(keys)
-  "given a map M of key/value pairs, go to Redis to retrieve the values and set the value to whatever it is in Redis (or nil if not found)"
-  (let* ((m (make-hash-table))
-         (num-args (1+ (hash-table-count m)))
-         (command (format "*%d\r\n$4\r\nMGET\r\n" num-args))
-         (key-value-string ""))
-    (maphash (lambda (k v)
-               (setf key-value-string (concat key-value-string (format "$%d\r\n%s\r\n" (length k) k))))
-             m)
-    (process-send-string eredis-process (concat command key-value-string))
-    (eredis-get-response)))
+;; NOTE I think this is deprecated since it doesn't seem to do anything
+;; (defun eredis-get-map(keys)
+;;   "Given a map M of key/value pairs, go to Redis to retrieve the values and set the value to whatever it is in Redis (or nil if not found)"
+;;   (let* ((m (make-hash-table))
+;;          (num-args (1+ (hash-table-count m)))
+;;          (command (format "*%d\r\n$4\r\nMGET\r\n" num-args))
+;;          (key-value-string ""))
+;;     (maphash (lambda (k v)
+;;                (setf key-value-string (concat key-value-string (format "$%d\r\n%s\r\n" (length k) k))))
+;;              m)
+;;     (process-send-string eredis-process (concat command key-value-string))
+;;     (eredis-get-response)))
 
 ;; all the redis commands are documented at http://redis.io/commands
 ;; key commands
@@ -365,7 +373,7 @@ as it first constructs a list of key value pairs then uses that to construct the
   (eredis-command-returning "expireat" key unix-time))
 
 (defun eredis-keys(pattern &optional process)
-  "returns a list of keys where the key matches the provided
+  "Returns a list of keys where the key matches the provided
 pattern. see the link for the style of patterns"
   (eredis-command-returning "keys" pattern process))
 
@@ -404,9 +412,9 @@ pattern. see the link for the style of patterns"
   "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
   (eredis-command-returning "ttl" key))
 
-(defun eredis-type(key)
+(defun eredis-type(key &optional process)
   "Get the type of KEY"
-  (eredis-command-returning "type" key))
+  (eredis-command-returning "type" key process))
 
 ;; string commands
 
@@ -908,7 +916,7 @@ done. Other commands will fail with an error until then"
   ;; since there shouldn't be one
   (if (and eredis-process (eq (process-status eredis-process) 'open))
       (progn 
-        (process-send-string eredis-process (eredis-make-request "shutdown"))
+        (process-send-string eredis-process (eredis-build-request "shutdown"))
         (eredis-kthxbye))))
 
 (defun eredis-slaveof(host port)
@@ -951,12 +959,12 @@ is then sent to redis using mset"
         (eredis-mset mset-param)
       nil)))
 
-(defun eredis-org-table-from-keys(keys)
-  "for each of KEYS lookup their type in redis and populate an org table 
+(defun eredis-org-table-from-keys(keys &optional process)
+  "For each of KEYS lookup their type in redis and populate an org table 
 containing a row for each one"
   (eredis--org-table-from-list  '("Key" "Type" "Values"))
   (dolist (key keys)
-    (let ((type (eredis-type key)))	 
+    (let ((type (eredis-type key process)))	 
       (cond
        ((string= "string" type)
         (eredis-org-table-from-string key))
