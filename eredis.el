@@ -1,9 +1,9 @@
 ;;; eredis.el --- eredis, a Redis client in emacs lisp
-;; Copyright 2012 Justin Heyes-Jones
+;; Copyright 2012-2018 Justin Heyes-Jones
  
 ;; Author: Justin Heyes-Jones
 ;; URL: http://github.com/justinhj/eredis/
-;; Version: 1.0.00
+;; Version: 0.9.0
 ;; Package-Requires: (dash)
 
 ;; See for info on the protocol http://redis.io/topics/protocol
@@ -35,6 +35,10 @@
 ;;; and body
 ;;; note that this will change the API though
 ;;; simpler solution is to throw the error
+;;; TODO check all private function names have --
+;;; TODO check all functionas have eredis-
+;;; Everything here https://github.com/bbatsov/emacs-lisp-style-guide
+;;; heading comments three semi colons, otherwise two
 
 
 (require 'org-element)
