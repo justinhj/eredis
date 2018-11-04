@@ -1,4 +1,4 @@
-;;; eredis.el --- eredis, a Redis client in emacs lisp
+;;; eredis.el --- eredis, a Redis client in emacs lisp -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2012-2018 --- Justin Heyes-Jones
  
@@ -209,7 +209,7 @@ as it first constructs a list of key value pairs then uses that to construct the
 	       (header-size (+ (length (match-string 1 resp)) 1 2 2))
 	       (total-size-bytes (+ header-size body-size))
 	       (body-start (match-end 0)))
-	  (message (format "body size %d" body-size))
+	  ;;(message (format "body size %d" body-size))
 	  (if (< body-size 0)
 	      `(,nil . ,(- header-size 2))
 	    (if (= body-size 0)
@@ -221,13 +221,12 @@ as it first constructs a list of key value pairs then uses that to construct the
 		  `(,message . ,(+ header-size (length message))))))))
       `(incomplete . 0))))
 
-  ;; wip rewriting
 (defun eredis-parse-array-response (resp)
   "Parse the redis array response RESP and return the list of results. handles null entries when length is -1 as per spec. handles lists of any type of thing, handles lists of lists etc"
   (if (string-match "^*\\([\-]*[0-9]+\\)\r\n" resp)
       (let ((array-length (string-to-number (match-string 1 resp)))
 	    (header-size (+ (length (match-string 1 resp)) 1 2)))
-	(message (format "parse array length %d header %d resp %s" array-length header-size resp))
+	;;(message (format "parse array length %d header %d resp %s" array-length header-size resp))
 	(case array-length
 	  (0
 	   `(() . 4))
@@ -237,13 +236,13 @@ as it first constructs a list of key value pairs then uses that to construct the
 	   (let ((things nil)
 		 (current-pos header-size))
 	     (dotimes (n array-length)
-	       (message (format "n %d current-pos %d" n current-pos))
+	       ;;(message (format "n %d current-pos %d" n current-pos))
 	       (pcase-let ((`(,message . ,length)
 			    (eredis-parse-response (substring resp current-pos nil))))
-		 (message (format "%s length %d" message length))
+		 ;;(message (format "%s length %d" message length))
 		 (incf current-pos length)
 		 (!cons message things)))
-	     `(,things . ,current-pos)))))
+	     `(,(reverse things) . ,current-pos)))))
     `(incomplete . 0)))
 
 (defun eredis--util-remove-last(lst) (reverse (cdr (reverse lst))))
@@ -369,6 +368,12 @@ as it first constructs a list of key value pairs then uses that to construct the
 (defun eredis-expireat(key unix-time &optional process)
   "Set timeout on KEY to SECONDS and returns 1 if it succeeds 0 otherwise"
   (eredis-command-returning "expireat" key unix-time process))
+
+(defun eredis-scan(cursor &optional process)
+  (eredis-command-returning "scan" cursor process))
+
+(defun eredis-scan-match(cursor match &optional process)
+  (eredis-command-returning "scan" cursor "match" match process))
 
 (defun eredis-keys(pattern &optional process)
   "Returns a list of keys where the key matches the provided
@@ -840,8 +845,10 @@ done. Other commands will fail with an error until then"
 (defun eredis-bgsave(&optional process)
   (eredis-command-returning "bgsave" process))
 
-(defun eredis-config-get( &optional parameter prcoess)
-  (eredis-command-returning "config" "get" parameter process))
+(defun eredis-config-get( &optional parameter process)
+  (if parameter
+      (eredis-command-returning "config" "get" parameter process)
+    (eredis-command-returning "config" "get" process)))
 
 (defun eredis-config-set(parameter value &optional process)
   (eredis-command-returning "config" "set" parameter value process))

@@ -76,7 +76,7 @@
 (ert-deftest parse-array-response()
   (should (equal
 	   (eredis-parse-array-response "*2\r\n$5\r\nwinky\r\n$8\r\ngarfield\r\n")
-	   '(("garfield" "winky") . 29))))
+	   '(("winky" "garfield") . 29))))
 		 
 
 ;; empty list
@@ -92,5 +92,5 @@
   (should
    (equal
     (eredis-parse-response "*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+Foo\r\n-Bar\r\n")
-    '((("Bar" "Foo") (3 2 1)) . 36))))
+    '(((1 2 3) ("Foo" "Bar")) . 36))))
 
