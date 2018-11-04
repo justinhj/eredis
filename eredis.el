@@ -263,19 +263,13 @@ as it first constructs a list of key value pairs then uses that to construct the
             ret-val))
       (error "redis not connected"))))
 
-(defun eredis-buffer-message(process message)
-  "append a message to the redis process buffer"
-  (with-current-buffer (process-buffer process)
-    (goto-char (point-max))
-    (insert message)
-    (goto-char (point-max))))
-
 (defun eredis-sentinel(process event)
-  "sentinel function for redis network process which monitors for events"
-  (eredis-buffer-message process (format "sentinel event %s" event))
+  "Sentinel function for redis network process which monitors for events"
+  (message (format "sentinel event %s" event))
   (when (eq 'closed (process-status process))
-    (delete-process process)
-    (setq eredis--current-process nil)))
+    (when (eq process eredis--current-process)
+      (setq eredis--current-process nil))
+    (delete-process process)))
 
 (defun eredis-filter(process string)
   "filter function for redis network process, which receives output"
@@ -884,32 +878,29 @@ done. Other commands will fail with an error until then"
 (defun eredis-lastsave( &optional process)
   (eredis-command-returning "lastsave" process))
 
-;; TODO monitor opens up the *redis-buffer* and shows commands streaming 
-;; but it does not yet follow along, they just go off the screen, so I need
-;; to fix that.. probably broken
+;; monitor messages commands that Redis is processing
+;; deprecated until it can be made to work satisfactorily 
 (defun eredis-monitor(&optional process)
-  (let ((this-process (if process
-			  process
-			eredis--current-process)))
-    (unwind-protect
-        (progn
-          (switch-to-buffer (process-buffer this-process))
-          (goto-char (point-max))
-          (eredis-buffer-message this-process "C-g to exit\n")
-          (process-send-string this-process "monitor\r\n")
-          (let ((resp nil))
-            (while t
-              (redisplay t)
-              (sleep-for 1)
-              ;;(recenter-top-bottom 'top)
-              (let ((resp (eredis-get-response 3 5)))
-                (when resp
-                  (eredis-buffer-message this-process eredis-response))))))
-      ;; when the user hits C-g we send the quit command to exit
-      ;; monitor mode
-      (progn
-        (eredis-quit)
-        (eredis-kthxbye)))))
+  (message "eredis-monitor is deprecated for now"))
+
+  ;; (let ((this-process (if process
+  ;; 			  process
+  ;; 			eredis--current-process)))
+  ;;   (unwind-protect
+  ;;       (progn
+  ;;         (message "C-g to exit monitoring\n")
+  ;;         (process-send-string this-process "monitor\r\n")
+  ;;         (let ((resp nil))
+  ;;           (while t
+  ;;             (sleep-for 1)
+  ;;             (let ((resp (eredis-get-response process)))
+  ;;               (when resp
+  ;;                 (message resp))))))
+  ;;     ;; when the user hits C-g we send the quit command to exit
+  ;;     ;; monitor mode
+  ;;     (progn
+  ;;       (eredis-quit process)
+  ;;       (eredis-disconnect process)))))
 
 (defun eredis-save( &optional process)
   (eredis-command-returning "save" process))
