@@ -4,7 +4,7 @@
  
 ;; Author: Justin Heyes-Jones <justinhj@gmail.com>
 
-;; Version: 0.9
+;; Version: 0.9.1
 ;; Package-Requires: (dash)
 ;; Keywords: redis, api, tools, org
 ;; URL: http://github.com/justinhj/eredis/
