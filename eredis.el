@@ -4,7 +4,7 @@
  
 ;; Author: Justin Heyes-Jones <justinhj@gmail.com>
 
-;; Version: 0.9.1
+;; Version: 0.9.2
 ;; Package-Requires: (dash)
 ;; Keywords: redis, api, tools, org
 ;; URL: http://github.com/justinhj/eredis/
@@ -29,6 +29,10 @@
 ;; You can close a connection like so. The process buffer can be closed seperately.
 ;; (eredis-disconnect redis-p1)
 
+;;; 0.9.2 Changes
+
+;; Fixed working with very slow responses, request timeout and retry
+
 ;;; 0.9 Changes
 
 ;; Multiple connections to multiple redis servers supported
@@ -45,22 +49,27 @@
 ;; darksun
 ;; lujun9972
 
-;;; Future TODO 
-
-;; TODO rethink error reporting... it currently is not distinguishable to the user from a normal response, perhaps return a tuple ...
-;;; response type (incomplete, complete, error)
-;;; and body
-;;; note that this will change the API though
-;;; simpler solution is to throw the error
-;;; TODO check all private function names have --
-;;; TODO check all functionas have eredis-
-;;; Everything here https://github.com/bbatsov/emacs-lisp-style-guide
-;;; heading comments three semi colons, otherwise two
-
 (require 'cl)
 (require 'dash)
 
 (defvar eredis--current-process nil "Current Redis client process, used when the process is not passed in to the request")
+
+;;; Customization
+
+(defgroup eredis nil
+  "Eredis is a Redis client API for Emacs Lisp")
+
+(defcustom eredis-max-retries 1000
+  "Number of retries before failing to read the redis response. Note that this is a very high number because accepting input sometimes returns immediately, and if the response takes a few seconds you will do 10s of retries."
+
+  :type 'integer
+  :group 'eredis)
+
+(defcustom eredis-response-timeout 3
+  "Response timeout, in seconds, when waiting for output from Redis"
+
+  :type 'integer
+  :group 'eredis)
 
 ;; Util
 
@@ -143,18 +152,32 @@ as it first constructs a list of key value pairs then uses that to construct the
       nil)))
 
 (defun eredis-get-response(process)
-  "Given the process we try to get its buffer, and the next response start position (which is stored in the process properties under `response-start', we then identify the message type and parse the response. If we run out of response (maybe it isn't all downloaded yet we return `incomplete' otherwise we return the response, the format of which may depend on the request type"
+  "Given the process we try to get its buffer, and the next response start position (which is stored in the process properties under `response-start', we then identify the message type and parse the response. If we run out of response (maybe it isn't all downloaded yet we return `incomplete' otherwise we return the response, the format of which may depend on the request type. We use the customizable variables `eredis-response-timeout' and `eredis-max-retries' to determine the behaviour if the response is incomplete."
   (let ((buffer (process-buffer process))
-	(response-start (process-get process 'response-start)))
+	(response-start (process-get process 'response-start))
+	(tries 0)
+	(done nil)
+	(resp nil))
     (with-current-buffer buffer
-      (accept-process-output process 3 0 t)
-      (pcase-let ((`(,message . ,length)
-		   (eredis-parse-response (buffer-substring response-start (point-max)))))
-	(if (eq message 'incomplete)
-	    (message (format "incomplete message... %d" length))
-	  (prog1
-	      message
-	    (process-put process 'response-start (+ response-start length))))))))
+      (while (and
+	      (< tries eredis-max-retries)
+	      (not done))
+	(accept-process-output process eredis-response-timeout nil 1)
+	(pcase-let ((`(,message . ,length)
+		     (eredis-parse-response (buffer-substring response-start (point-max)))))
+	  (if (eq message 'incomplete)
+	      (progn
+		(incf tries 1)
+		(message (format "Incomplete message, will retry. (Attempt %d)" tries)))
+	    (progn
+	      (setf resp message)
+	      (setf done t)
+	      (process-put process 'response-start (+ response-start length)))))))
+    (if resp
+	resp
+      (progn
+	(eredis-clear-buffer buffer)
+	(error "Response did not complete")))))
 	      
 (defun eredis-response-type-of (response)
   "Get the type of RESP response based on the initial character"
