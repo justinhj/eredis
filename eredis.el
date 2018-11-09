@@ -73,6 +73,8 @@
 
 ;; Util
 
+(defun eredis-version() "0.9.2")
+
 (defun eredis--two-lists-to-map(key-list value-list)
   "take a list of keys LST1 and a list of values LST2 and make a hashmap, not particularly efficient
 as it first constructs a list of key value pairs then uses that to construct the hashmap"
@@ -268,7 +270,13 @@ as it first constructs a list of key value pairs then uses that to construct the
 	     `(,(reverse things) . ,current-pos)))))
     `(incomplete . 0)))
 
-(defun eredis--util-remove-last(lst) (reverse (cdr (reverse lst))))
+(defun eredis--util-remove-last(lst)
+  (reverse (cdr (reverse lst))))
+
+(defun eredis--util-append-to-list(a lst)
+  "Append `A' a list `LST'"
+  (reverse
+   (cons a (reverse lst))))
 
 (defun eredis-command-returning (command &rest args)
   "Send a command that has the status code return type. If the last argument is a process then that is the process used, otherwise it will use the value of `eredis--current-process'"
@@ -276,7 +284,12 @@ as it first constructs a list of key value pairs then uses that to construct the
 	 (process (if (processp last-arg)
 		      last-arg
 		    eredis--current-process))
-	 (command-args (eredis--util-remove-last args)))
+	 (command-args
+	  (if (or
+	       (null last-arg)
+	       (processp last-arg))
+	      (eredis--util-remove-last args)
+	    args)))
     (if (and process (eq (process-status process) 'open))
 	(progn 
           (process-send-string process (apply #'eredis-build-request command command-args))
@@ -474,7 +487,7 @@ pattern. see the link for the style of patterns"
   "Increment value of KEY by INCREMENT"
   (eredis-command-returning "incrby" key increment process))
 
-(defun eredis-mget(keys)
+(defun eredis-mget(&rest keys)
   "Get values of the specified keys, or nil if not present"
   (apply #'eredis-command-returning "mget" keys))
 
@@ -958,6 +971,8 @@ done. Other commands will fail with an error until then"
   (interactive)
   (eredis-command-returning "lolwut" process))
 
+;;; Org mode
+
 ;; Helpers 
 
 (defun eredis-mset-region(beg end delimiter) 
@@ -1116,6 +1131,19 @@ column to a value, returning the result as a dotted pair"
   (interactive)
   (let ((keyvalue (eredis-org-table-row-to-key-value-pair)))
     (eredis-set (car keyvalue) (cdr keyvalue))))
+
+;;; Iteration helpers
+
+(defun eredis-each-key-value(fn &optional process)
+  (let ((cursor))
+    (while (not (string-equal "0" cursor))
+      (destructuring-bind (new-cursor keys)
+	  (eredis-scan (if cursor cursor "0") process)
+	(setq cursor new-cursor)
+	(let ((values (apply #'eredis-mget (eredis--util-append-to-list process keys))))
+	  (-each (-zip keys values)
+	    (lambda (kv)
+	      (funcall fn (car kv) (cdr kv)))))))))
 
 (provide 'eredis)
 
