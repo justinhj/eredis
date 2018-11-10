@@ -270,14 +270,6 @@ as it first constructs a list of key value pairs then uses that to construct the
 	     `(,(reverse things) . ,current-pos)))))
     `(incomplete . 0)))
 
-(defun eredis--util-remove-last(lst)
-  (reverse (cdr (reverse lst))))
-
-(defun eredis--util-append-to-list(a lst)
-  "Append `A' a list `LST'"
-  (reverse
-   (cons a (reverse lst))))
-
 (defun eredis-command-returning (command &rest args)
   "Send a command that has the status code return type. If the last argument is a process then that is the process used, otherwise it will use the value of `eredis--current-process'"
   (let* ((last-arg (car (last args)))
@@ -288,7 +280,7 @@ as it first constructs a list of key value pairs then uses that to construct the
 	  (if (or
 	       (null last-arg)
 	       (processp last-arg))
-	      (eredis--util-remove-last args)
+	      (-butlast args)
 	    args)))
     (if (and process (eq (process-status process) 'open))
 	(progn 
@@ -1135,15 +1127,31 @@ column to a value, returning the result as a dotted pair"
 ;;; Iteration helpers
 
 (defun eredis-each-key-value(fn &optional process)
+  "Call FN with all the keys and their values in Redis. FN takes two arguments, a key and a value. If key is not of type string it will return nil as the value. Uses Redis SCAN function and calls it repeatedly. This is safe to do on large DB's unlike KEYS. Returns nil, used for side-effects only."
   (let ((cursor))
     (while (not (string-equal "0" cursor))
       (destructuring-bind (new-cursor keys)
 	  (eredis-scan (if cursor cursor "0") process)
 	(setq cursor new-cursor)
-	(let ((values (apply #'eredis-mget (eredis--util-append-to-list process keys))))
+	(let ((values (apply #'eredis-mget (-snoc keys process))))
 	  (-each (-zip keys values)
 	    (lambda (kv)
 	      (funcall fn (car kv) (cdr kv)))))))))
+
+(defun eredis-reduce-from-key-value(fn initial-value &optional process)
+  "Scans all the keys in Redis and looks up the values. A list of these keys and values is then passed to `--reduce-from', the single value that results from that is passed to the next scan and so on, until the scan is done."
+  (let (cursor
+	(acc initial-value))
+    (while (not (string-equal "0" cursor))
+      (destructuring-bind (new-cursor keys)
+	  (eredis-scan (if cursor cursor "0") process)
+	(setq cursor new-cursor)
+	(let ((values (apply #'eredis-mget (-snoc keys process))))
+	  (setq acc (--reduce-from
+		     (funcall fn acc (car it) (cdr it)) 
+		     acc
+		     (-zip keys values))))))
+    acc))
 
 (provide 'eredis)
 
