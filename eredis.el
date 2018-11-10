@@ -483,9 +483,9 @@ pattern. see the link for the style of patterns"
   "Get values of the specified keys, or nil if not present"
   (apply #'eredis-command-returning "mget" keys))
 
-(defun eredis-mset(m)
+(defun eredis-mset(m &optional process)
   "Set the keys and values of the map M in Redis using mset"
-  (apply #'eredis-command-returning "mset" (eredis-parse-map-or-list-arg m)))
+  (apply #'eredis-command-returning "mset" (-snoc (eredis-parse-map-or-list-arg m) process)))
 
 (defun eredis-msetnx(m)
   "Set the keys and values of the map M in Redis using msetnx (only if all are not existing)"
@@ -967,7 +967,7 @@ done. Other commands will fail with an error until then"
 
 ;; Helpers 
 
-(defun eredis-mset-region(beg end delimiter) 
+(defun eredis-mset-region(beg end delimiter &optional process) 
   "Parse the current region using DELIMITER to split each line into a key value pair which
 is then sent to redis using mset"
   (interactive "*r\nsDelimiter: ")
@@ -990,7 +990,7 @@ is then sent to redis using mset"
                   (puthash key value mset-param)
                   (forward-line))))))))
     (if (> (hash-table-count mset-param) 0)
-        (eredis-mset mset-param)
+        (eredis-mset mset-param process)
       nil)))
 
 (defun eredis-org-table-from-keys(keys &optional process)
