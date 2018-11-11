@@ -4,17 +4,20 @@
  
 ;; Author: Justin Heyes-Jones <justinhj@gmail.com>
 
-;; Version: 0.9.2
+;; Version: 0.9.3
 ;; Package-Requires: (dash)
 ;; Keywords: redis, api, tools, org
 ;; URL: http://github.com/justinhj/eredis/
 
 ;; See for info on the protocol http://redis.io/topics/protocol
 
+;;; LICENSE
+
+;; This software is released under the Gnu License v3. See http://www.gnu.org/licenses/gpl.txt
+
 ;;; Commentary:
 
 ;; Eredis provides a programmatic API for accessing Redis (in-memory data structure store/database) using emacs lisp.
-;; This software is released under the Gnu License v3. See http://www.gnu.org/licenses/gpl.txt
 
 ;; Usage:
 
@@ -28,6 +31,17 @@
 
 ;; You can close a connection like so. The process buffer can be closed seperately.
 ;; (eredis-disconnect redis-p1)
+
+;;; 0.9.3 Changes
+
+;; Iteration and reductions over Redis strings
+
+;; eredis-reduce-from-key-value
+;; eredis-each-key-value
+
+;; Bug fixes
+
+
 
 ;;; 0.9.2 Changes
 
