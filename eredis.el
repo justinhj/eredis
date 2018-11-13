@@ -87,7 +87,7 @@
 
 ;; Util
 
-(defun eredis-version() "0.9.2")
+(defun eredis-version() "0.9.3")
 
 (defun eredis--two-lists-to-map(key-list value-list)
   "take a list of keys LST1 and a list of values LST2 and make a hashmap, not particularly efficient
