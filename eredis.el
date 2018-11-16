@@ -1152,6 +1152,18 @@ column to a value, returning the result as a dotted pair"
 	    (lambda (kv)
 	      (funcall fn (car kv) (cdr kv)))))))))
 
+(defun eredis-each-matching-key-value(fn match &optional process)
+  "Call FN with all the keys matching pattern MATCH and their values in Redis. FN takes two arguments, a key and a value. If key is not of type string it will return nil as the value. Uses Redis SCAN function and calls it repeatedly. This is safe to do on large DB's unlike KEYS. Returns nil, used for side-effects only."
+  (let ((cursor))
+    (while (not (string-equal "0" cursor))
+      (destructuring-bind (new-cursor keys)
+	  (eredis-scan-match (if cursor cursor "0") match process)
+	(setq cursor new-cursor)
+	(let ((values (apply #'eredis-mget (-snoc keys process))))
+	  (-each (-zip keys values)
+	    (lambda (kv)
+	      (funcall fn (car kv) (cdr kv)))))))))
+
 (defun eredis-reduce-from-key-value(fn initial-value &optional process)
   "Scans all the keys in Redis and looks up the values. A list of these keys and values is then passed to `--reduce-from', the single value that results from that is passed to the next scan and so on, until the scan is done."
   (let (cursor
@@ -1159,6 +1171,21 @@ column to a value, returning the result as a dotted pair"
     (while (not (string-equal "0" cursor))
       (destructuring-bind (new-cursor keys)
 	  (eredis-scan (if cursor cursor "0") process)
+	(setq cursor new-cursor)
+	(let ((values (apply #'eredis-mget (-snoc keys process))))
+	  (setq acc (--reduce-from
+		     (funcall fn acc (car it) (cdr it)) 
+		     acc
+		     (-zip keys values))))))
+    acc))
+
+(defun eredis-reduce-from-matching-key-value(fn initial-value match &optional process)
+  "Scans all the keys in Redis and looks up the values. A list of these keys and values is then passed to `--reduce-from', the single value that results from that is passed to the next scan and so on, until the scan is done."
+  (let (cursor
+	(acc initial-value))
+    (while (not (string-equal "0" cursor))
+      (destructuring-bind (new-cursor keys)
+	  (eredis-scan-match (if cursor cursor "0") match process)
 	(setq cursor new-cursor)
 	(let ((values (apply #'eredis-mget (-snoc keys process))))
 	  (setq acc (--reduce-from
