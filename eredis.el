@@ -51,6 +51,7 @@
 
 (require 'cl)
 (require 'dash)
+(require 'stream)
 
 (defvar eredis--current-process nil "Current Redis client process, used when the process is not passed in to the request")
 
@@ -334,6 +335,15 @@ as it first constructs a list of key value pairs then uses that to construct the
 				    :sentinel #'eredis-sentinel
 				    :buffer buffer))
       (process-put eredis--current-process 'response-start 1))))
+
+(defun eredis-switch-to-process-buffer(&optional process)
+  "Switch to the Redis process buffer. If PROCESS is nil try to switch to the default buffer"
+  (interactive)
+  (let ((this-process (if (processp process)
+			  process
+			eredis--current-process)))
+    (when (processp this-process)
+      (switch-to-buffer (process-buffer this-process)))))
 
 (defun eredis-clear-buffer(&optional process)
   "Erase the process buffer and reset the `response-start' property to the start"
@@ -1116,6 +1126,7 @@ column to a value, returning the result as a dotted pair"
   (interactive)
   (let ((keyvalue (eredis-org-table-row-to-key-value-pair)))
     (eredis-set (car keyvalue) (cdr keyvalue))))
+
 
 (provide 'eredis)
 
