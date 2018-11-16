@@ -4,7 +4,7 @@
  
 ;; Author: Justin Heyes-Jones <justinhj@gmail.com>
 
-;; Version: 0.9.3
+;; Version: 0.9.4
 ;; Package-Requires: (dash)
 ;; Keywords: redis, api, tools, org
 ;; URL: http://github.com/justinhj/eredis/
@@ -32,14 +32,17 @@
 ;; You can close a connection like so. The process buffer can be closed seperately.
 ;; (eredis-disconnect redis-p1)
 
+;;; 0.9.4 Changes
+
+;; eredis-reduce-from-matching-key-value
+;; eredis-each-matching-key-value
+
 ;;; 0.9.3 Changes
 
 ;; Iteration and reductions over Redis strings
 
 ;; eredis-reduce-from-key-value
 ;; eredis-each-key-value
-;; eredis-reduce-from-matching-key-value
-;; eredis-each-matching-key-value
 
 ;; Bug fixes
 
@@ -89,7 +92,7 @@
 
 ;; Util
 
-(defun eredis-version() "0.9.3")
+(defun eredis-version() "0.9.4")
 
 (defun eredis--two-lists-to-map(key-list value-list)
   "take a list of keys LST1 and a list of values LST2 and make a hashmap, not particularly efficient
