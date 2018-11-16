@@ -38,6 +38,8 @@
 
 ;; eredis-reduce-from-key-value
 ;; eredis-each-key-value
+;; eredis-reduce-from-matching-key-value
+;; eredis-each-matching-key-value
 
 ;; Bug fixes
 
