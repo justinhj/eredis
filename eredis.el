@@ -4,6 +4,7 @@
  
 ;; Author: Justin Heyes-Jones <justinhj@gmail.com>
 
+;; Streaming branch
 ;; Version: 0.9.4
 ;; Package-Requires: (dash)
 ;; Keywords: redis, api, tools, org
@@ -1198,6 +1199,23 @@ column to a value, returning the result as a dotted pair"
 		     acc
 		     (-zip keys values))))))
     acc))
+
+;;; Stream
+
+(defun stream-keys(&optional process)
+  (let (cursor)
+    (while (not (string-equal "0" cursor))
+      (destructuring-bind (new-cursor keys)
+	  (eredis-scan-match (if cursor cursor "0") match process)
+	(message (format "scan got %d keys" (length keys)))
+))))
+
+(defun ass(n) n)
+
+(stream-first (stream-rest (stream-make 'a nil)))
+
+(stream-empty-p (stream-empty))
+
 
 (provide 'eredis)
 
