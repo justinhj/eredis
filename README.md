@@ -107,5 +107,5 @@ Almost the entire Redis API works no problem, except for the publish subscribe c
 
 ## License etc
 
-See the source code in `eredis.el` for licensing information, contrubtor thanks etc
+See the source code in `eredis.el` for licensing information, contributor thanks etc
 
