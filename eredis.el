@@ -4,9 +4,8 @@
  
 ;; Author: Justin Heyes-Jones <justinhj@gmail.com>
 
-;; Streaming branch
-;; Version: 0.9.4
-;; Package-Requires: (dash)
+;; Version: 0.9.6.streaming
+;; Package-Requires: (dash stream)
 ;; Keywords: redis, api, tools, org
 ;; URL: http://github.com/justinhj/eredis/
 
@@ -32,6 +31,14 @@
 
 ;; You can close a connection like so. The process buffer can be closed seperately.
 ;; (eredis-disconnect redis-p1)
+
+;;; 0.9.6 Changes
+
+;; Fix install 
+
+;;; 0.9.5 Changes
+
+;; Bug fixes for org mode and missing keys
 
 ;;; 0.9.4 Changes
 
@@ -70,7 +77,10 @@
 ;; lujun9972
 
 (require 'cl)
+(require 'cl-lib)
 (require 'dash)
+(require 'stream)
+(require 'generator)
 
 (defvar eredis--current-process nil "Current Redis client process, used when the process is not passed in to the request")
 
@@ -93,7 +103,7 @@
 
 ;; Util
 
-(defun eredis-version() "0.9.4")
+(defun eredis-version() "0.9.6")
 
 (defun eredis--two-lists-to-map(key-list value-list)
   "take a list of keys LST1 and a list of values LST2 and make a hashmap, not particularly efficient
@@ -135,13 +145,10 @@ as it first constructs a list of key value pairs then uses that to construct the
   "insert a map M of key value pairs into the current buffer"
   (maphash (lambda (a b) (insert (format "%s,%s\n" a b))) m))
 
-;; TODO random macro would be nice; dolist with a different body to execute for the first 
-;; or last item 
 (defun eredis--insert-list(l)
-  "insert a list L into the current buffer"
-  (let ((str (mapconcat #'identity l ",")))
+  "Insert a list L into the current buffer separated by commas"
+  (let ((str (--reduce (concat acc "," it) l)))
     (insert str)))
-                                        ;    (insert (cl-subseq str 0 ))))
 
 (defun eredis--stringify-numbers-and-symbols(item)
   (cond 
@@ -179,6 +186,7 @@ as it first constructs a list of key value pairs then uses that to construct the
 	(response-start (process-get process 'response-start))
 	(tries 0)
 	(done nil)
+	(last-incomplete nil)
 	(resp nil))
     (with-current-buffer buffer
       (while (and
@@ -190,16 +198,16 @@ as it first constructs a list of key value pairs then uses that to construct the
 	  (if (eq message 'incomplete)
 	      (progn
 		(incf tries 1)
+		(setf last-incomplete t)
 		(message (format "Incomplete message, will retry. (Attempt %d)" tries)))
 	    (progn
 	      (setf resp message)
 	      (setf done t)
+	      (setf last-incomplete nil)
 	      (process-put process 'response-start (+ response-start length)))))))
-    (if resp
-	resp
-      (progn
-	(eredis-clear-buffer buffer)
-	(error "Response did not complete")))))
+    (if last-incomplete       
+	(error "Response did not complete")
+      resp)))
 	      
 (defun eredis-response-type-of (response)
   "Get the type of RESP response based on the initial character"
@@ -1016,7 +1024,8 @@ is then sent to redis using mset"
 (defun eredis-org-table-from-keys(keys &optional process)
   "For each of KEYS lookup their type in redis and populate an org table 
 containing a row for each one"
-  (eredis--org-table-from-list  '("Key" "Type" "Values"))
+  ;; insert the header
+  (insert "|Key|Value(s)|Type\n|-+-+-|\n")
   (dolist (key keys)
     (let ((type (eredis-type key process)))	 
       (cond
@@ -1033,16 +1042,16 @@ containing a row for each one"
        ((string= "none" type)
         nil) ; silently skip missing keys
        (t
-        (insert (format "| %s | unknown type %s |\n" key type)))))))
+        (insert (format "| %s | | unknown type %s |\n" key type)))))))
 
 (defun eredis-org-table-from-list(key)
-  "create an org table populated with the members of the list KEY"
+  "Create an org table populated with the members of the list KEY"
   (let ((items (eredis-lrange key 0 -1)))
     (when items
       (eredis--org-table-from-list (apply #' list key "list" items)))))
 
 (defun eredis-org-table-from-zset(key &optional withscores)
-  "create an org table populated with the members of the zset KEY"
+  "Create an org table populated with the members of the zset KEY"
   (let ((items (eredis-zrange key 0 -1 withscores)))
     (when items
       (eredis--org-table-from-list (apply #'list key "zset" items)))))
@@ -1061,11 +1070,12 @@ containing a row for each one"
       (eredis--org-table-from-map m))))
 
 (defun eredis-org-table-from-string(key)
-  "create a small org table from the key, and it's string value"
+  "Create a small org table from the KEY, and its string value"
   (let ((val (eredis-get key)))
     (when val
-      (eredis--org-table-from-list (list key "string" val)))))
+      (eredis--org-table-from-list (list key val "string")))))
 
+;; TODO This should use scan or the -each helpers
 (defun eredis-org-table-from-pattern(pattern)
   "Search Redis for the pattern of keys and create an org table from the results"
   (let ((keys (eredis-keys pattern)))
@@ -1077,6 +1087,7 @@ containing a row for each one"
   (if (listp l)
       (let ((beg (point)))
         (eredis--insert-list l)
+	(insert "\n")
         (org-table-convert-region beg (point) '(4))
         (forward-line))))
 
@@ -1104,6 +1115,7 @@ column to values in an elisp map"
       (let ((beg (org-table-begin))
             (end (org-table-end)))
         (goto-char beg)
+	(org-table-goto-line 2) ;; skip the header
         (while (> end (point))
           (let ((key (eredis-org-table-get-field-clean 1))
                 (value (eredis-org-table-get-field-clean 2)))
@@ -1115,6 +1127,7 @@ column to values in an elisp map"
 (defun eredis-org-table-row-to-key-value-pair()
   "When point is in an org table convert the first column to a key and the second 
 column to a value, returning the result as a dotted pair"
+  (interactive)
   (let ((beg (org-table-begin))
         (end (org-table-end)))
     (if (and (>= (point) beg)
@@ -1200,22 +1213,41 @@ column to a value, returning the result as a dotted pair"
 		     (-zip keys values))))))
     acc))
 
-;;; Stream
+;;; Streams
 
-(defun stream-keys(&optional process)
+;; Streams are lazily evaluated which means we can make a stream of all the
+;; keys and values in Redis and then combine them without worrying
+;; about bringing all of them into memory at once
+;; First we make a generator that can SCAN through the keys and values
+;; and then we turn that into a stream...
+
+(iter-defun eredis--key-value-generator(&optional process) 
   (let (cursor)
     (while (not (string-equal "0" cursor))
       (destructuring-bind (new-cursor keys)
-	  (eredis-scan-match (if cursor cursor "0") match process)
-	(message (format "scan got %d keys" (length keys)))
-))))
+	  (eredis-scan (if cursor cursor "0") process)
+	(setq cursor new-cursor)
+	(let ((values (apply #'eredis-mget (-snoc keys process))))
+	  (while (> (length keys) 0)
+	    (iter-yield (cons (car keys) (car values)))
+	    (setq keys (!cdr keys)
+		  values (!cdr values))))))))
 
-(defun ass(n) n)
+(setq g1 (eredis--key-value-generator))
 
-(stream-first (stream-rest (stream-make 'a nil)))
+(setq s1 (stream-from-iterator g1))
 
-(stream-empty-p (stream-empty))
+;; count the keys/values that start with user
 
+(setq matching (seq-filter (lambda (kv) (string-prefix-p "user:" (car kv))) s1)
+      dummy t)
+
+;; even numbers 
+
+(setq matching-even (seq-filter (lambda (kv) (= 0 (mod (string-to-number (cdr kv)) 2))) matching)
+      dummy t)
+
+(seq-reduce (lambda (acc val) (1+ acc)) matching-even 0) 
 
 (provide 'eredis)
 
