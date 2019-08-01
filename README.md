@@ -6,8 +6,8 @@ eredis is a redis client written in Emacs Lisp
 
 Melpa Status
 
-* `MELPA ![https://melpa.org/#/request](https://melpa.org/#/request) |melpa-badge|
-* `MELPA Stable ![https://stable.melpa.org/#/request](https://stable.melpa.org/#/request) |melpa-stable-badge|
+* MELPA ![https://melpa.org/#/request](https://melpa.org/#/request) |melpa-badge|
+* MELPA Stable ![https://stable.melpa.org/#/request](https://stable.melpa.org/#/request) |melpa-stable-badge|
 
 Features
 
