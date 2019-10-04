@@ -47,7 +47,7 @@ First connect to the server. Some of the commands are interactive but all work f
 
 A redis session begins by connecting to a server. It returns a process which you can use for further operations.
 
-`(setq p1 (eredis-connect "localhost" "6379"))`
+`(setq p1 (eredis-connect "localhost" 6379))`
 
 and ends by closing the connection:
 
